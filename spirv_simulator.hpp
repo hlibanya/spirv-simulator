@@ -128,9 +128,11 @@ public:
 private:
     // Parsing artefacts
     bool verbose_;
-    std::vector<uint32_t> program_words_; 
+    std::vector<uint32_t> program_words_;
+    std::unordered_map<uint32_t, std::vector<uint32_t>> spec_instr_words_;
     std::span<const uint32_t> stream_;
     std::vector<Instruction> instructions_;
+    std::unordered_map<uint32_t, Instruction> spec_instructions_;
     std::unordered_map<uint32_t, size_t> result_id_to_inst_index_;
     std::unordered_map<uint32_t, Type> types_;
     std::unordered_map<uint32_t, std::vector<uint32_t>> struct_members_;
@@ -148,6 +150,10 @@ private:
     std::unordered_map<uint32_t, FunctionInfo> funcs_;
 
     std::unordered_map<uint32_t, uint32_t> extended_imports_;
+
+    // Control flow
+    uint32_t prev_block_id_ = 0;
+    uint32_t current_block_id_ = 0;
 
     // Heaps & frames
     struct Frame{
@@ -232,6 +238,7 @@ private:
     void Op_SpecConstantComposite(const Instruction&);
     void Op_ArrayLength(const Instruction&);
     void Op_UGreaterThanEqual(const Instruction&);
+    void Op_Phi(const Instruction&);
 };
 
 #endif

@@ -102,6 +102,7 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpSpecConstantOp,         [this](const Instruction& i){Op_SpecConstantOp(i);});
     R(spv::Op::OpSpecConstantComposite,  [this](const Instruction& i){Op_SpecConstantComposite(i);});
     R(spv::Op::OpUGreaterThanEqual,      [this](const Instruction& i){Op_UGreaterThanEqual(i);});
+    R(spv::Op::OpPhi,                    [this](const Instruction& i){Op_Phi(i);});
 }
 
 void SPIRVSimulator::Validate(){
@@ -174,7 +175,7 @@ void SPIRVSimulator::ParseAll(){
                 break;
             }
             case spv::Op::OpExtInstImport:{
-                extended_imports_[instruction.words[1]] = 0;  // Just crash it until we figure out how to handle these
+                extended_imports_[instruction.words[1]] = 0;
                 break;
             }
             default:{
@@ -227,7 +228,7 @@ void SPIRVSimulator::Run(){
         }
 
         FunctionInfo& function_info = funcs_[entry_point];
-        // We can set the return value to whatever, ignored if the call stack is emptu on return
+        // We can set the return value to whatever, ignored if the call stack is empty on return
         call_stack_.push_back({function_info.first_inst_index, 0, {}, {}});
 
         while(!call_stack_.empty()){
@@ -238,7 +239,7 @@ void SPIRVSimulator::Run(){
                 PrintInstruction(instruction);
             }
 
-           ExecuteInstruction(instruction);
+            ExecuteInstruction(instruction);
         }
     }
 
@@ -452,7 +453,7 @@ Value& SPIRVSimulator::GetValue(uint32_t result_id){
     }
 
     if (globals_.find(result_id) == globals_.end()){
-        throw std::runtime_error("SPIRV simulator: Access to undefined variable");
+        throw std::runtime_error("SPIRV simulator: Access to undefined variable with ID: " + std::to_string(result_id));
     }
 
     return globals_.at(result_id);
@@ -887,8 +888,17 @@ void SPIRVSimulator::Op_FunctionCall(const Instruction& instruction){
     }
 }
 
-void SPIRVSimulator::Op_Label(const Instruction&){
-    // This is a NOP in our design
+void SPIRVSimulator::Op_Label(const Instruction& instruction){
+    /*
+    OpLabel
+
+    The label instruction of a block.
+
+    References to a block are through the Result <id> of its label.
+    */
+    uint32_t result_id = instruction.words[1];
+    prev_block_id_ = current_block_id_;
+    current_block_id_ = result_id;
 }
 
 void SPIRVSimulator::Op_Branch(const Instruction& instruction){
@@ -1005,7 +1015,7 @@ void SPIRVSimulator::Op_FAdd(const Instruction& instruction){
 }
 
 
-void SPIRVSimulator::Op_ExtInst(const Instruction&){
+void SPIRVSimulator::Op_ExtInst(const Instruction& instruction){
     /*
     Execute an instruction in an imported set of extended instructions.
 
@@ -1016,6 +1026,12 @@ void SPIRVSimulator::Op_ExtInst(const Instruction&){
 
     Operand 1, …​ are the operands to the extended instruction.
     */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t set_id = instruction.words[2];
+
+    std::cout << "SPIRV simulator: Setting OpExtInst result value to default, this is wrong and we need to implement this" << std::endl;
+    SetValue(result_id, MakeDefault(type_id));
 }
 
 
@@ -1127,7 +1143,7 @@ void SPIRVSimulator::Op_INotEqual(const Instruction& instruction){
             } else if(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
                 elem_result = (uint64_t)(std::get<int64_t>(vec1->elems[i]) != std::get<uint64_t>(vec2->elems[i]));
             } else {
-                // TODO: Error
+                throw std::runtime_error("SPIRV simulator: Could not find valid parameter type combination for Op_INotEqual vector operand");
             }
 
             result_vec->elems.push_back(elem_result);
@@ -1148,7 +1164,7 @@ void SPIRVSimulator::Op_INotEqual(const Instruction& instruction){
         } else if(std::holds_alternative<int64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
             result = (uint64_t)(std::get<int64_t>(op1) != std::get<uint64_t>(op2));
         } else {
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Could not find valid parameter type combination for Op_INotEqual");
         }
 
         SetValue(result_id, result);
@@ -1199,14 +1215,14 @@ void SPIRVSimulator::Op_IAdd(const Instruction& instruction){
 
             if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
                 elem_result = (std::get<uint64_t>(vec1->elems[i]) + std::get<uint64_t>(vec2->elems[i]));
-            } else if(std::holds_alternative<uint64_t>(vec1->elems[i]) + std::holds_alternative<int64_t>(vec2->elems[i])){
+            } else if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<int64_t>(vec2->elems[i])){
                 elem_result = (std::get<uint64_t>(vec1->elems[i]) + std::get<int64_t>(vec2->elems[i]));
-            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) + std::holds_alternative<int64_t>(vec2->elems[i])){
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<int64_t>(vec2->elems[i])){
                 elem_result = (std::get<int64_t>(vec1->elems[i]) + std::get<int64_t>(vec2->elems[i]));
-            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) + std::holds_alternative<uint64_t>(vec2->elems[i])){
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
                 elem_result = (std::get<int64_t>(vec1->elems[i]) + std::get<uint64_t>(vec2->elems[i]));
             } else {
-                // TODO: Error
+                throw std::runtime_error("SPIRV simulator: Could not find valid parameter type combination for Op_IAdd vector operand");
             }
 
             result_vec->elems.push_back(elem_result);
@@ -1220,14 +1236,14 @@ void SPIRVSimulator::Op_IAdd(const Instruction& instruction){
         Value result;
         if(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
             result = (std::get<uint64_t>(op1) + std::get<uint64_t>(op2));
-        } else if(std::holds_alternative<uint64_t>(op1) + std::holds_alternative<int64_t>(op2)){
+        } else if(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<int64_t>(op2)){
             result = (std::get<uint64_t>(op1) + std::get<int64_t>(op2));
-        } else if(std::holds_alternative<int64_t>(op1) + std::holds_alternative<int64_t>(op2)){
+        } else if(std::holds_alternative<int64_t>(op1) && std::holds_alternative<int64_t>(op2)){
             result = (std::get<int64_t>(op1) + std::get<int64_t>(op2));
-        } else if(std::holds_alternative<int64_t>(op1) + std::holds_alternative<uint64_t>(op2)){
+        } else if(std::holds_alternative<int64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
             result = (std::get<int64_t>(op1) + std::get<uint64_t>(op2));
         } else {
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Could not find valid parameter type combination for Op_IAdd");
         }
 
         SetValue(result_id, result);
@@ -1248,7 +1264,7 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
     */
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
-    uint32_t operand_id = instruction.words[2];
+    uint32_t operand_id = instruction.words[3];
 
     const Type& type = types_.at(type_id);
     const Value& operand = GetValue(operand_id);
@@ -1270,7 +1286,9 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
                 result_vec->elems.push_back((uint64_t)!(std::get<uint64_t>(vec->elems[i])));
             } else if (std::holds_alternative<int64_t>(vec->elems[i])){
                 result_vec->elems.push_back((uint64_t)!(std::get<int64_t>(vec->elems[i])));
-            } 
+            } else {
+                throw std::runtime_error("SPIRV simulator: Could not find valid parameter type combination for Op_LogicalNot vector operand");
+            }
         }
 
         SetValue(result_id, result);
@@ -1284,7 +1302,9 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
                 result = (uint64_t)!(std::get<uint64_t>(operand));
             } else if (std::holds_alternative<int64_t>(operand)){
                 result = (uint64_t)!(std::get<int64_t>(operand));
-            } 
+            } else {
+                throw std::runtime_error("SPIRV simulator: Could not find valid parameter type combination for Op_LogicalNot");
+            }
         }
 
         SetValue(result_id, result);
@@ -1359,8 +1379,78 @@ void SPIRVSimulator::Op_SpecConstant(const Instruction& instruction) {
 }
 
 void SPIRVSimulator::Op_SpecConstantOp(const Instruction& instruction) {
-    (void)instruction;
-    // TODO: Implement this
+    /*
+    OpSpecConstantOp
+
+    Declare a new specialization constant that results from doing an operation.
+    Result Type must be the type required by the Result Type of Opcode.
+
+    Opcode is an unsigned 32-bit integer. It must equal one of the following opcodes.
+    OpSConvert, OpUConvert (missing before version 1.4), OpFConvert
+    OpSNegate, OpNot, OpIAdd, OpISub
+    OpIMul, OpUDiv, OpSDiv, OpUMod, OpSRem, OpSMod
+    OpShiftRightLogical, OpShiftRightArithmetic, OpShiftLeftLogical
+    OpBitwiseOr, OpBitwiseXor, OpBitwiseAnd
+    OpVectorShuffle, OpCompositeExtract, OpCompositeInsert
+    OpLogicalOr, OpLogicalAnd, OpLogicalNot,
+    OpLogicalEqual, OpLogicalNotEqual
+    OpSelect
+    OpIEqual, OpINotEqual
+    OpULessThan, OpSLessThan
+    OpUGreaterThan, OpSGreaterThan
+    OpULessThanEqual, OpSLessThanEqual
+    OpUGreaterThanEqual, OpSGreaterThanEqual
+
+    If the Shader capability was declared, OpQuantizeToF16 is also valid.
+
+    If the Kernel capability was declared, the following opcodes are also valid:
+    OpConvertFToS, OpConvertSToF
+    OpConvertFToU, OpConvertUToF
+    OpUConvert, OpConvertPtrToU, OpConvertUToPtr
+    OpGenericCastToPtr, OpPtrCastToGeneric, OpBitcast
+    OpFNegate, OpFAdd, OpFSub, OpFMul, OpFDiv, OpFRem, OpFMod
+    OpAccessChain, OpInBoundsAccessChain
+    OpPtrAccessChain, OpInBoundsPtrAccessChain
+
+    Operands are the operands required by opcode, and satisfy the semantics of opcode.
+    In addition, all Operands that are <id>s must be either:
+    - the <id>s of other constant instructions, or
+    - OpUndef, when allowed by opcode, or
+    - for the AccessChain named opcodes, their Base is allowed to be a global (module scope) OpVariable instruction.
+
+    See Specialization.
+    */
+    uint32_t result_id = instruction.words[2];
+
+    // TODO: Double check this after thoroughly reading the spec.
+    if (spec_instructions_.find(result_id) == spec_instructions_.end()){
+        uint32_t type_id = instruction.words[1];
+        uint32_t opcode = instruction.words[3];
+
+        auto& spec_instr_words = spec_instr_words_[result_id];
+
+        Instruction spec_instruction;
+        spec_instruction.opcode = (spv::Op)opcode;
+        spec_instruction.word_count = instruction.words.size() - 1;
+
+        uint32_t header_word = (spec_instruction.word_count << kWordCountShift) | spec_instruction.opcode;
+        spec_instr_words.push_back(header_word);
+        spec_instr_words.push_back(type_id);
+        spec_instr_words.push_back(result_id);
+
+        for (uint32_t operand_index = 4; operand_index < instruction.word_count; ++operand_index){
+            spec_instr_words.push_back(instruction.words[operand_index]);
+        }
+
+        spec_instruction.words = std::span<const uint32_t>{spec_instr_words.data(), spec_instr_words.size()};
+        spec_instructions_[result_id] = spec_instruction;
+    }
+
+    if (verbose_){
+        PrintInstruction(spec_instructions_[result_id]);
+    }
+
+    ExecuteInstruction(spec_instructions_[result_id]);
 }
 
 void SPIRVSimulator::Op_SpecConstantComposite(const Instruction& instruction) {
@@ -1428,4 +1518,41 @@ void SPIRVSimulator::Op_UGreaterThanEqual(const Instruction& instruction){
         Value result = (uint64_t)(std::get<uint64_t>(val_op1) > std::get<uint64_t>(val_op2));
         SetValue(result_id, result);
     }
+}
+
+void SPIRVSimulator::Op_Phi(const Instruction& instruction){
+    /*
+
+    OpPhi
+
+    The SSA phi function.
+    The result is selected based on control flow: If control reached the current block from Parent i, Result Id gets
+    the value that Variable i had at the end of Parent i.
+
+    Result Type can be any type except OpTypeVoid.
+
+    Operands are a sequence of pairs: (Variable 1, Parent 1 block), (Variable 2, Parent 2 block), …​
+    Each Parent i block is the label of an immediate predecessor in the CFG of the current block.
+    There must be exactly one Parent i for each parent block of the current block in the CFG.
+    If Parent i is reachable in the CFG and Variable i is defined in a block, that defining block must dominate Parent i.
+    All Variables must have a type matching Result Type.
+
+    Within a block, this instruction must appear before all non-OpPhi instructions (except for OpLine and OpNoLine, which can
+    be mixed with OpPhi).
+    */
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    for (uint32_t operand_index = 3; operand_index < instruction.word_count; operand_index += 2){
+        uint32_t variable_id = instruction.words[operand_index];
+        uint64_t block_id = instruction.words[operand_index + 1];
+
+        if (block_id == prev_block_id_){
+            SetValue(result_id, GetValue(variable_id));
+            return;
+        }
+    }
+
+    throw std::runtime_error("SPIRV simulator: Op_Phi faield to find a valid source block ID, something is broken in the control flow handling.");
 }
