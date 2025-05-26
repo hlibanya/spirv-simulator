@@ -449,7 +449,7 @@ Value& SPIRVSimulator::Deref(const PointerV &ptr){
             auto matrix = std::get<std::shared_ptr<MatrixV>>(*value);
 
             if(i >= matrix->cols.size()){
-                throw std::runtime_error("SPIRV simulator: Vector index OOB");
+                throw std::runtime_error("SPIRV simulator: Matrix index OOB");
             }
 
             value = &matrix->cols[i];
@@ -2156,31 +2156,33 @@ void SPIRVSimulator::Op_CompositeExtract(const Instruction& instruction){
 
     Value* current_composite = &(GetValue(composite_id));
     for (uint32_t i = 4; i < instruction.word_count; ++i){
+        uint32_t literal_index = instruction.words[i];
 
         if(std::holds_alternative<std::shared_ptr<AggregateV>>(*current_composite)){
             auto agg = std::get<std::shared_ptr<AggregateV>>(*current_composite);
 
-            if(i >= agg->elems.size()){
+            if(literal_index >= agg->elems.size()){
                 throw std::runtime_error("SPIRV simulator: Aggregate index OOB");
             }
 
-            current_composite = &agg->elems[i];
+            current_composite = &agg->elems[literal_index];
         } else if (std::holds_alternative<std::shared_ptr<VectorV>>(*current_composite)){
             auto vec = std::get<std::shared_ptr<VectorV>>(*current_composite);
 
-            if(i >= vec->elems.size()){
+            if(literal_index >= vec->elems.size()){
+                std::cout << vec->elems.size() << " : " << i << std::endl;
                 throw std::runtime_error("SPIRV simulator: Vector index OOB");
             }
 
-            current_composite = &vec->elems[i];
+            current_composite = &vec->elems[literal_index];
         } else if (std::holds_alternative<std::shared_ptr<MatrixV>>(*current_composite)){
             auto matrix = std::get<std::shared_ptr<MatrixV>>(*current_composite);
 
-            if(i >= matrix->cols.size()){
-                throw std::runtime_error("SPIRV simulator: Vector index OOB");
+            if(literal_index >= matrix->cols.size()){
+                throw std::runtime_error("SPIRV simulator: Matrix index OOB");
             }
 
-            current_composite = &matrix->cols[i];
+            current_composite = &matrix->cols[literal_index];
         }
         else{
             throw std::runtime_error("SPIRV simulator: Pointer dereference into non-composite object");
