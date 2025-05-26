@@ -239,6 +239,17 @@ private:
     void Op_ArrayLength(const Instruction&);
     void Op_UGreaterThanEqual(const Instruction&);
     void Op_Phi(const Instruction&);
+    void Op_ConvertUToF(const Instruction&);
+    void Op_ConvertSToF(const Instruction&);
+    void Op_FDiv(const Instruction&);
+    void Op_FSub(const Instruction&);
+    void Op_VectorTimesScalar(const Instruction&);
+    void Op_SLessThan(const Instruction&);
+    void Op_Dot(const Instruction&);
+    void Op_FOrdGreaterThan(const Instruction&);
+    void Op_CompositeExtract(const Instruction&);
+    void Op_Bitcast(const Instruction&);
+    void Op_IMul(const Instruction&);
 };
 
 #endif

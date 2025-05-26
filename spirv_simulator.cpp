@@ -32,7 +32,7 @@ void SPIRVSimulator::DecodeHeader(){
     uint32_t magic_number = program_words_[0];
     if (magic_number != 0x07230203)
     {
-        // TODO: Print a warning or something, dont necessarily need to abort here
+        std::cout << "SPIRV simulator: WARNING magic SPIRV header number wrong, should be: " << 0x07230203 << " but is " << magic_number << std::endl;
     }
     /*
     uint32_t version = program_words_[1];
@@ -40,8 +40,6 @@ void SPIRVSimulator::DecodeHeader(){
     uint32_t bound = program_words_[3];
     uint32_t schema = program_words_[4];
     */
-
-    // TODO: Print some info
 
     stream_ = std::span<const uint32_t>(program_words_).subspan(5);
 }
@@ -103,6 +101,17 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpSpecConstantComposite,  [this](const Instruction& i){Op_SpecConstantComposite(i);});
     R(spv::Op::OpUGreaterThanEqual,      [this](const Instruction& i){Op_UGreaterThanEqual(i);});
     R(spv::Op::OpPhi,                    [this](const Instruction& i){Op_Phi(i);});
+    R(spv::Op::OpConvertUToF,            [this](const Instruction& i){Op_ConvertUToF(i);});
+    R(spv::Op::OpConvertSToF,            [this](const Instruction& i){Op_ConvertSToF(i);});
+    R(spv::Op::OpFDiv,                   [this](const Instruction& i){Op_FDiv(i);});
+    R(spv::Op::OpFSub,                   [this](const Instruction& i){Op_FSub(i);});
+    R(spv::Op::OpVectorTimesScalar,      [this](const Instruction& i){Op_VectorTimesScalar(i);});
+    R(spv::Op::OpSLessThan,              [this](const Instruction& i){Op_SLessThan(i);});
+    R(spv::Op::OpDot,                    [this](const Instruction& i){Op_Dot(i);});
+    R(spv::Op::OpFOrdGreaterThan,        [this](const Instruction& i){Op_FOrdGreaterThan(i);});
+    R(spv::Op::OpCompositeExtract,       [this](const Instruction& i){Op_CompositeExtract(i);});
+    R(spv::Op::OpBitcast,                [this](const Instruction& i){Op_Bitcast(i);});
+    R(spv::Op::OpIMul,                   [this](const Instruction& i){Op_IMul(i);});
 }
 
 void SPIRVSimulator::Validate(){
@@ -181,6 +190,11 @@ void SPIRVSimulator::ParseAll(){
             default:{
                 if (!in_function){
                     ExecuteInstruction(instruction);
+                } else {
+                    bool is_implemented = opcode_dispatchers_.find(instruction.opcode) != opcode_dispatchers_.end();
+                    if(!is_implemented){
+                        HandleUnimplementedOpcode(instruction);
+                    }
                 }
                 break;
             }
@@ -195,7 +209,7 @@ void SPIRVSimulator::ParseAll(){
 
     if (unimplemented_instructions_.size() && verbose_){
         // TODO: Deduplicate, probably better to use a map to track the ids
-        std::cout << "SPIRV simulator: The following global scope instructions are unsupported:" << std::endl;
+        std::cout << "SPIRV simulator: The following instructions are unsupported:" << std::endl;
 
         for (auto instruction : unimplemented_instructions_){
             
@@ -350,6 +364,7 @@ Value SPIRVSimulator::MakeScalar(uint32_t type_id, const std::span<const uint32_
 
 Value SPIRVSimulator::MakeDefault(uint32_t type_id){
     const Type& type = types_.at(type_id);
+
     switch(type.kind){
         case Type::Kind::Int:
         case Type::Kind::Float:
@@ -361,16 +376,18 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id){
         }
         case Type::Kind::Vector:{
             auto vec = std::make_shared<VectorV>();
-            vec->elems.assign(type.vector.elem_count, uint64_t{0});
+            vec->elems.reserve(type.vector.elem_count);
+            for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+                vec->elems.push_back(MakeDefault(type.vector.elem_type_id));
+            }
 
             return vec;
         }
         case Type::Kind::Matrix:{
             auto matrix = std::make_shared<MatrixV>();
+            matrix->cols.reserve(type.matrix.col_count);
             for(uint32_t i = 0; i < type.matrix.col_count; ++i){
-                auto col = std::make_shared<VectorV>();
-                col->elems.assign(types_.at(type.matrix.col_type_id).vector.elem_count, uint64_t{0});
-                Value mat_val = col;
+                Value mat_val = MakeDefault(type.matrix.col_type_id);
                 matrix->cols.push_back(mat_val);
             }
 
@@ -405,8 +422,7 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id){
 // ---------------------------------------------------------------------------
 Value& SPIRVSimulator::Deref(const PointerV &ptr){
     // TODO: Double check correctness here after refactor
-    auto& heap = (ptr.storage_class == (uint32_t)spv::StorageClass::StorageClassFunction)
-        ? call_stack_.back().func_heap : Heap(ptr.storage_class);
+    auto& heap = (ptr.storage_class == (uint32_t)spv::StorageClass::StorageClassFunction) ? call_stack_.back().func_heap : Heap(ptr.storage_class);
 
     Value* value = &heap.at(ptr.obj_id);
     for(size_t depth = 0; depth < ptr.idx_path.size(); ++depth){
@@ -523,6 +539,8 @@ void SPIRVSimulator::T_Float(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_Vector(const Instruction& instruction){
+
+    std::cout << "VEC SIZE: " << instruction.words[3] << std::endl;
     Type type;
     type.kind = Type::Kind::Vector;
     type.vector = {
@@ -688,7 +706,18 @@ void SPIRVSimulator::Op_CompositeConstruct(const Instruction& instruction){
     if(type.kind == Type::Kind::Vector){
         auto vec = std::make_shared<VectorV>();
         for(auto i = 3; i < instruction.word_count; ++i){
-            vec->elems.push_back(GetValue(instruction.words[i]));
+            const Value& component_value = GetValue(instruction.words[i]);
+
+            if (std::holds_alternative<std::shared_ptr<VectorV>>(component_value)){
+                std::shared_ptr<VectorV> component_vector = std::get<std::shared_ptr<VectorV>>(component_value);
+
+                for (auto& vec_component : component_vector->elems){
+                    vec->elems.push_back(vec_component);
+                }
+
+            } else {
+                vec->elems.push_back(component_value);
+            }
         }
 
         SetValue(result_id, vec);
@@ -738,6 +767,10 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
 
     const Type& type = types_.at(type_id);
 
+    if (type.kind != Type::Kind::Pointer){
+        throw std::runtime_error("SPIRV simulator: Op_Variable must only be used to create pointer types");
+    }
+
     Value init;
     if(instruction.word_count >= 5){
         // The instruction has initialization data
@@ -745,7 +778,7 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
     }
     else{
         // No init data, set to default
-        init = MakeDefault(type.kind == Type::Kind::Pointer ? type.pointer.pointee_type_id : type_id);
+        init = MakeDefault(type.pointer.pointee_type_id);
     }
 
     if(storage_class == (uint32_t)spv::StorageClass::StorageClassFunction){
@@ -774,8 +807,12 @@ void SPIRVSimulator::Op_Load(const Instruction& instruction){
     If present, any Memory Operands must begin with a memory operand literal.
     If not present, it is the same as specifying the memory operand None.
     */
+    uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
-    const PointerV& pointer = std::get<PointerV>(GetValue(instruction.words[3]));
+    uint32_t pointer_id = instruction.words[3];
+
+    const PointerV& pointer = std::get<PointerV>(GetValue(pointer_id));
+
     SetValue(result_id, Deref(pointer));
 }
 
@@ -834,8 +871,10 @@ void SPIRVSimulator::Op_AccessChain(const Instruction& instruction){
 
         if (std::holds_alternative<uint64_t>(index_value)){
             pointer.idx_path.push_back((uint32_t)std::get<uint64_t>(index_value));
+        } else if (std::holds_alternative<int64_t>(index_value)){
+            pointer.idx_path.push_back((uint32_t)std::get<int64_t>(index_value));
         } else {
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Index not of integer type in Op_AccessChain");
         }
     }
 
@@ -986,14 +1025,14 @@ void SPIRVSimulator::Op_FAdd(const Instruction& instruction){
         const Value& val_op2 = GetValue(instruction.words[4]);
 
         if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Operands not of vector type in Op_FAdd");
         }
 
         auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
         auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
 
         if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Operands not of equal/correct length in Op_FAdd");
         }
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
@@ -1002,15 +1041,20 @@ void SPIRVSimulator::Op_FAdd(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
-    } else {
+    } else if (type.kind == Type::Kind::Float){
         Value result;
         const Value& op1 = GetValue(instruction.words[3]);
         const Value& op2 = GetValue(instruction.words[4]);
 
-        // TODO: Check that they are doubles
+        if(!(std::holds_alternative<double>(op1) && std::holds_alternative<double>(op2))){
+            throw std::runtime_error("SPIRV simulator: Operands not of float type in Op_FAdd");
+        }
+
         result = std::get<double>(op1) + std::get<double>(op2);
 
         SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_FAdd, must be vector or float");
     }
 }
 
@@ -1028,7 +1072,7 @@ void SPIRVSimulator::Op_ExtInst(const Instruction& instruction){
     */
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
-    uint32_t set_id = instruction.words[2];
+    //uint32_t set_id = instruction.words[2];
 
     std::cout << "SPIRV simulator: Setting OpExtInst result value to default, this is wrong and we need to implement this" << std::endl;
     SetValue(result_id, MakeDefault(type_id));
@@ -1062,14 +1106,14 @@ void SPIRVSimulator::Op_FMul(const Instruction& instruction){
         const Value& val_op2 = GetValue(instruction.words[4]);
 
         if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Operands not of vector type in Op_FMul");
         }
 
         auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
         auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
 
         if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Operands not of equal/correct length in Op_Mul");
         }
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
@@ -1078,7 +1122,7 @@ void SPIRVSimulator::Op_FMul(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
-    } else {
+    } else if (type.kind == Type::Kind::Float){
         Value result;
         const Value& op1 = GetValue(instruction.words[3]);
         const Value& op2 = GetValue(instruction.words[4]);
@@ -1087,6 +1131,8 @@ void SPIRVSimulator::Op_FMul(const Instruction& instruction){
         result = std::get<double>(op1) * std::get<double>(op2);
 
         SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_Mul, must be vector or float");
     }
 }
 
@@ -1119,14 +1165,14 @@ void SPIRVSimulator::Op_INotEqual(const Instruction& instruction){
         const Value& val_op2 = GetValue(instruction.words[4]);
 
         if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Operands not of vector type in Op_INotEqual");
         }
 
         auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
         auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
 
         if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Operands not of equal/correct length in Op_INotEqual");
         }
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
@@ -1150,7 +1196,7 @@ void SPIRVSimulator::Op_INotEqual(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
-    } else {
+    } else if (type.kind == Type::Kind::Bool){
         Value result;
         const Value& op1 = GetValue(instruction.words[3]);
         const Value& op2 = GetValue(instruction.words[4]);
@@ -1168,6 +1214,8 @@ void SPIRVSimulator::Op_INotEqual(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_IAdd, must be vector or bool");
     }
 }
 
@@ -1200,14 +1248,14 @@ void SPIRVSimulator::Op_IAdd(const Instruction& instruction){
         const Value& val_op2 = GetValue(instruction.words[4]);
 
         if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Operands not of vector type in Op_IAdd");
         }
 
         auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
         auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
 
         if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Operands not of equal/correct length in Op_IAdd");
         }
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
@@ -1248,7 +1296,7 @@ void SPIRVSimulator::Op_IAdd(const Instruction& instruction){
 
         SetValue(result_id, result);
     } else {
-        // TODO: Error
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_IAdd, must be vector or int");
     }
 }
 
@@ -1292,7 +1340,7 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
-    } else {
+    } else if (type.kind == Type::Kind::Bool){
         Value result;
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
@@ -1308,6 +1356,8 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_LogicalNot, must be vector or bool");
     }
 }
 
@@ -1497,14 +1547,14 @@ void SPIRVSimulator::Op_UGreaterThanEqual(const Instruction& instruction){
         auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
 
         if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Operands set to be vector type in Op_UGreaterThanEqual, but they are not, illegal input parameters");
         }
 
         auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
         auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
 
         if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Operands are vector type but not of equal length in Op_UGreaterThanEqual");
         }
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
@@ -1541,7 +1591,7 @@ void SPIRVSimulator::Op_Phi(const Instruction& instruction){
     be mixed with OpPhi).
     */
 
-    uint32_t type_id = instruction.words[1];
+    //uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
     for (uint32_t operand_index = 3; operand_index < instruction.word_count; operand_index += 2){
@@ -1555,4 +1605,561 @@ void SPIRVSimulator::Op_Phi(const Instruction& instruction){
     }
 
     throw std::runtime_error("SPIRV simulator: Op_Phi faield to find a valid source block ID, something is broken in the control flow handling.");
+}
+
+void SPIRVSimulator::Op_ConvertUToF(const Instruction& instruction){
+    /*
+    OpConvertUToF
+
+    Convert value numerically from unsigned integer to floating point.
+    Result Type must be a scalar or vector of floating-point type.
+    Unsigned Value must be a scalar or vector of integer type. It must have the same number of components as Result Type.
+
+    Results are computed per component.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t value_id = instruction.words[3];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op = GetValue(value_id);
+
+        if(!std::holds_alternative<std::shared_ptr<VectorV>>(val_op)){
+            throw std::runtime_error("SPIRV simulator: Operand set to be vector type in OpConvertUToF, but it is not, illegal input parameters");
+        }
+
+        auto vec = std::get<std::shared_ptr<VectorV>>(val_op);
+
+        if (vec->elems.size() != type.vector.elem_count){
+            throw std::runtime_error("SPIRV simulator: Operands are vector type but not of valid length in OpConvertUToF");
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            if(!std::holds_alternative<uint64_t>(vec->elems[i])){
+                throw std::runtime_error("SPIRV simulator: Found non-unsigned integer operand in OpConvertUToF vector operands");
+            }
+
+            Value elem_result = (double)std::get<uint64_t>(vec->elems[i]);
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Float){
+        const Value& op = GetValue(value_id);
+
+        if(!std::holds_alternative<uint64_t>(op)){
+            throw std::runtime_error("SPIRV simulator: Found non-unsigned integer operand in OpConvertUToF");
+        }
+
+        Value result = (double)std::get<uint64_t>(op);
+        SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid return type in OpConvertUToF: " + std::to_string((uint32_t)(type.kind)) + ", must be vector or float");
+    }
+}
+
+void SPIRVSimulator::Op_ConvertSToF(const Instruction& instruction){
+    /*
+    OpConvertSToF
+
+    Convert value numerically from signed integer to floating point.
+    Result Type must be a scalar or vector of floating-point type.
+    Signed Value must be a scalar or vector of integer type. It must have the same number of components as Result Type.
+
+    Results are computed per component.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t value_id = instruction.words[3];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op = GetValue(value_id);
+        if(!std::holds_alternative<std::shared_ptr<VectorV>>(val_op)){
+            throw std::runtime_error("SPIRV simulator: Operand set to be vector type in Op_ConvertSToF, but it is not, illegal input parameters");
+        }
+
+        auto vec = std::get<std::shared_ptr<VectorV>>(val_op);
+
+        if (vec->elems.size() != type.vector.elem_count){
+            throw std::runtime_error("SPIRV simulator: Operands are vector type but not of valid length in Op_ConvertSToF");
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            if(!std::holds_alternative<int64_t>(vec->elems[i])){
+                throw std::runtime_error("SPIRV simulator: Found non-signed integer operand in Op_ConvertSToF vector operands");
+            }
+
+            Value elem_result = (double)std::get<int64_t>(vec->elems[i]);
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Float){
+        const Value& op = GetValue(value_id);
+
+        if(!std::holds_alternative<int64_t>(op)){
+            throw std::runtime_error("SPIRV simulator: Found non-signed integer operand in Op_ConvertSToF");
+        }
+
+        Value result = (double)std::get<int64_t>(op);
+        SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type in Op_ConvertSToF: " + std::to_string((uint32_t)(type.kind)) + ", must be vector or float");
+    }
+}
+
+
+void SPIRVSimulator::Op_FDiv(const Instruction& instruction){
+    /*
+    OpFDiv
+
+    Floating-point division of Operand 1 divided by Operand 2.
+
+    Result Type must be a scalar or vector of floating-point type.
+    The types of Operand 1 and Operand 2 both must be the same as Result Type.
+
+    Results are computed per component.
+    */
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            throw std::runtime_error("SPIRV simulator: Operands set to be vector type in Op_FDiv, but they are not, illegal input parameters");
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            throw std::runtime_error("SPIRV simulator: Operands are vector type but not of equal length in Op_FDiv");
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result;
+
+            if(!(std::holds_alternative<double>(vec1->elems[i]) && std::holds_alternative<double>(vec2->elems[i]))){
+                throw std::runtime_error("SPIRV simulator: Found non-floating point operand in Op_FDiv vector operands");
+            }
+
+            elem_result = std::get<double>(vec1->elems[i]) / std::get<double>(vec2->elems[i]);
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Float){
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        Value result;
+        if(!(std::holds_alternative<double>(op1) && std::holds_alternative<double>(op2))){
+            throw std::runtime_error("SPIRV simulator: Found non-floating point operand in Op_FDiv");
+        }
+
+        result = std::get<double>(op1) + std::get<double>(op2);
+
+        SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_FDiv, must be vector or float");
+    }
+}
+
+void SPIRVSimulator::Op_FSub(const Instruction& instruction){
+    /*
+    OpFSub
+
+    Floating-point subtraction of Operand 2 from Operand 1.
+    Result Type must be a scalar or vector of floating-point type.
+    The types of Operand 1 and Operand 2 both must be the same as Result Type.
+
+    Results are computed per component.
+    */
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            throw std::runtime_error("SPIRV simulator: Operands set to be vector type in Op_FSub, but they are not, illegal input parameters");
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            throw std::runtime_error("SPIRV simulator: Operands are vector type but not of equal length in Op_FSub");
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result;
+
+            if(!(std::holds_alternative<double>(vec1->elems[i]) && std::holds_alternative<double>(vec2->elems[i]))){
+                throw std::runtime_error("SPIRV simulator: Found non-floating point operand in Op_FSub vector operands");
+            }
+
+            elem_result = std::get<double>(vec1->elems[i]) - std::get<double>(vec2->elems[i]);
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Float){
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        Value result;
+        if(!(std::holds_alternative<double>(op1) && std::holds_alternative<double>(op2))){
+            throw std::runtime_error("SPIRV simulator: Found non-floating point operand in Op_FSub");
+        }
+
+        result = std::get<double>(op1) - std::get<double>(op2);
+
+        SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_FSub, must be vector or float");
+    }
+}
+
+void SPIRVSimulator::Op_VectorTimesScalar(const Instruction& instruction){
+    /*
+    OpVectorTimesScalar
+
+    Scale a floating-point vector.
+    Result Type must be a vector of floating-point type.
+    The type of Vector must be the same as Result Type. Each component of Vector is multiplied by Scalar.
+
+    Scalar must have the same type as the Component Type in Result Type.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t vector_id = instruction.words[3];
+    uint32_t scalar_id = instruction.words[4];
+
+    const Type& type = types_.at(type_id);
+
+    Value result = std::make_shared<VectorV>();
+    auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+    // TODO: Check this before calling get just in case (for clearer error messages)
+    auto vec = std::get<std::shared_ptr<VectorV>>(GetValue(vector_id));
+    double scalar_value = std::get<double>(GetValue(scalar_id));
+
+    for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+        Value elem_result;
+
+        if(!std::holds_alternative<double>(vec->elems[i])){
+            throw std::runtime_error("SPIRV simulator: Found non-floating point operand in Op_VectorTimesScalar vector operands");
+        }
+
+        elem_result = std::get<double>(vec->elems[i]) * scalar_value;
+
+        result_vec->elems.push_back(elem_result);
+    }
+
+    SetValue(result_id, result);
+}
+
+void SPIRVSimulator::Op_SLessThan(const Instruction& instruction){
+    /*
+    OpSLessThan
+
+    Signed-integer comparison if Operand 1 is less than Operand 2.
+    Result Type must be a scalar or vector of Boolean type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type.
+    They must have the same component width, and they must have the same number of components as Result Type.
+
+    Results are computed per component.
+    */
+    // No explicit requirement for ints to be signed? Assume they have to be for now (but detect if they aint)
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            throw std::runtime_error("SPIRV simulator: Operands set to be vector type in Op_SLessThan, but they are not, illegal input parameters");
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            throw std::runtime_error("SPIRV simulator: Operands are vector type but not of equal length in Op_SLessThan");
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result;
+
+            if(!(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<int64_t>(vec2->elems[i]))){
+                throw std::runtime_error("SPIRV simulator: Found non-signed integer operand in Op_SLessThan vector operands");
+            }
+
+            elem_result = (uint64_t)(std::get<int64_t>(vec1->elems[i]) < std::get<int64_t>(vec2->elems[i]));
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Bool){
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        Value result;
+        if(!(std::holds_alternative<int64_t>(op1) && std::holds_alternative<int64_t>(op2))){
+            throw std::runtime_error("SPIRV simulator: Found non-signed integer operand in Op_SLessThan");
+        }
+
+        result = (uint64_t)(std::get<int64_t>(op1) < std::get<int64_t>(op2));
+
+        SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_SLessThan, must be vector or bool");
+    }
+}
+
+void SPIRVSimulator::Op_Dot(const Instruction& instruction){
+    /*
+    OpDot
+
+    Dot product of Vector 1 and Vector 2.
+    Result Type must be a floating-point type scalar.
+    Vector 1 and Vector 2 must be vectors of the same type, and their component type must be Result Type.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Float){
+        double result = 0.0;
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            throw std::runtime_error("SPIRV simulator: Operands not of vector type in Op_Dot");
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if (vec1->elems.size() != vec2->elems.size()){
+            throw std::runtime_error("SPIRV simulator: Operands not of equal/correct length in Op_Dot");
+        }
+
+        for (uint32_t i = 0; i < vec1->elems.size(); ++i){
+            if(std::holds_alternative<double>(vec1->elems[i]) && std::holds_alternative<double>(vec2->elems[i])){
+                result += std::get<double>(vec1->elems[i]) * std::get<double>(vec2->elems[i]);
+            } else {
+                throw std::runtime_error("SPIRV simulator: Found non-floating point operand in Op_Dot vector operands");
+            }
+        }
+
+        Value val_result = result;
+        SetValue(result_id, val_result);
+    }  else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_Dot, must be float");
+    }
+}
+
+void SPIRVSimulator::Op_FOrdGreaterThan(const Instruction& instruction){
+    /*
+    OpFOrdGreaterThan
+
+    Floating-point comparison if operands are ordered and Operand 1 is greater than Operand 2.
+    Result Type must be a scalar or vector of Boolean type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of floating-point type.
+    They must have the same type, and they must have the same number of components as Result Type.
+
+    Results are computed per component.
+    */
+}
+
+void SPIRVSimulator::Op_CompositeExtract(const Instruction& instruction){
+    /*
+    OpCompositeExtract
+
+    Extract a part of a composite object.
+    Result Type must be the type of object selected by the last provided index. The instruction result is the extracted object.
+    Composite is the composite to extract from.
+
+    Indexes walk the type hierarchy, potentially down to component granularity, to select the part to extract.
+    All indexes must be in bounds. All composite constituents use zero-based numbering, as described by their OpType…​ instruction.
+    Each index is an unsigned 32-bit integer.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t composite_id = instruction.words[3];
+
+    Value* current_composite = &(GetValue(composite_id));
+    for (uint32_t i = 4; i < instruction.word_count; ++i){
+
+        if(std::holds_alternative<std::shared_ptr<AggregateV>>(*current_composite)){
+            auto agg = std::get<std::shared_ptr<AggregateV>>(*current_composite);
+
+            if(i >= agg->elems.size()){
+                throw std::runtime_error("SPIRV simulator: Aggregate index OOB");
+            }
+
+            current_composite = &agg->elems[i];
+        } else if (std::holds_alternative<std::shared_ptr<VectorV>>(*current_composite)){
+            auto vec = std::get<std::shared_ptr<VectorV>>(*current_composite);
+
+            if(i >= vec->elems.size()){
+                throw std::runtime_error("SPIRV simulator: Vector index OOB");
+            }
+
+            current_composite = &vec->elems[i];
+        } else if (std::holds_alternative<std::shared_ptr<MatrixV>>(*current_composite)){
+            auto matrix = std::get<std::shared_ptr<MatrixV>>(*current_composite);
+
+            if(i >= matrix->cols.size()){
+                throw std::runtime_error("SPIRV simulator: Vector index OOB");
+            }
+
+            current_composite = &matrix->cols[i];
+        }
+        else{
+            throw std::runtime_error("SPIRV simulator: Pointer dereference into non-composite object");
+        }
+    }
+
+    SetValue(result_id, *current_composite);
+}
+
+void SPIRVSimulator::Op_Bitcast(const Instruction& instruction){
+    /*
+    OpBitcast
+
+    Bit pattern-preserving type conversion.
+
+    Result Type must be an OpTypePointer, or a scalar or vector of numerical-type.
+
+    Operand must have a type of OpTypePointer, or a scalar or vector of numerical-type. It must be a different type than Result Type.
+
+    Before version 1.5: If either Result Type or Operand is a pointer, the other must be a pointer or an integer scalar.
+    Starting with version 1.5: If either Result Type or Operand is a pointer, the other must be a pointer, an integer scalar, or an integer vector.
+
+    If both Result Type and the type of Operand are pointers, they both must point into same storage class.
+
+    Behavior is undefined if the storage class of Result Type does not match the one used by the operation that produced the value of Operand.
+
+    If Result Type has the same number of components as Operand, they must also have the same component width, and results are computed per component.
+
+    If Result Type has a different number of components than Operand, the total number of bits in Result Type must equal the total number of
+    bits in Operand. Let L be the type, either Result Type or Operand’s type, that has the larger number of components. Let S be the other type,
+    with the smaller number of components. The number of components in L must be an integer multiple of the number of components in S.
+    The first component (that is, the only or lowest-numbered component) of S maps to the first components of L, and so on, up to the last
+    component of S mapping to the last components of L. Within this mapping, any single component of S (mapping to multiple components of L) maps
+    its lower-ordered bits to the lower-numbered components of L.
+    */
+}
+
+void SPIRVSimulator::Op_IMul(const Instruction& instruction){
+    /*
+    OpIMul
+
+    Integer multiplication of Operand 1 and Operand 2.
+    Result Type must be a scalar or vector of integer type.
+
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type.
+    They must have the same number of components as Result Type. They must have the same component width as Result Type.
+
+    The resulting value equals the low-order N bits of the correct result R, where N is the component width and R is computed with enough
+    precision to avoid overflow and underflow.
+
+    Results are computed per component.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            throw std::runtime_error("SPIRV simulator: Operands not of vector type in Op_IMul");
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            throw std::runtime_error("SPIRV simulator: Operands not of equal/correct length in Op_IMul");
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            uint64_t elem_result;
+
+            if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
+                elem_result = (std::get<uint64_t>(vec1->elems[i]) * std::get<uint64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<int64_t>(vec2->elems[i])){
+                elem_result = (std::get<int64_t>(vec1->elems[i]) * std::get<int64_t>(vec2->elems[i]));
+            } else {
+                throw std::runtime_error("SPIRV simulator: Could not find valid parameter type combination for Op_IMul vector operand");
+            }
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Int){
+        Value result;
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        if(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
+            result = (std::get<uint64_t>(op1) * std::get<uint64_t>(op2));
+        } else if(std::holds_alternative<int64_t>(op1) && std::holds_alternative<int64_t>(op2)){
+            result = (std::get<int64_t>(op1) * std::get<int64_t>(op2));
+        } else {
+            throw std::runtime_error("SPIRV simulator: Could not find valid parameter type combination for Op_IMul");
+        }
+
+        SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_IMul, must be vector or integer type");
+    }
 }
