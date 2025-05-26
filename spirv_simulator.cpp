@@ -61,6 +61,7 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpTypeForwardPointer,     [this](const Instruction& i){T_ForwardPointer(i);});
     R(spv::Op::OpTypeRuntimeArray,       [this](const Instruction& i){T_RuntimeArray(i);});
     R(spv::Op::OpTypeFunction,           [this](const Instruction& i){T_Function(i);});
+    R(spv::Op::OpExtInstImport,          [this](const Instruction& i){Op_ExtInstImport(i);});
     R(spv::Op::OpConstant,               [this](const Instruction& i){Op_Constant(i);});
     R(spv::Op::OpConstantComposite,      [this](const Instruction& i){Op_ConstantComposite(i);});
     R(spv::Op::OpCompositeConstruct,     [this](const Instruction& i){Op_CompositeConstruct(i);});
@@ -183,10 +184,10 @@ void SPIRVSimulator::ParseAll(){
                 entry_points_.push_back(instruction.words[2]); // word[2] is <entry‑point id>
                 break;
             }
-            case spv::Op::OpExtInstImport:{
+            /*case spv::Op::OpExtInstImport:{
                 extended_imports_[instruction.words[1]] = 0;
                 break;
-            }
+            }*/
             default:{
                 if (!in_function){
                     ExecuteInstruction(instruction);
@@ -483,6 +484,53 @@ void SPIRVSimulator::SetValue(uint32_t result_id, const Value& value){
     }
 }
 
+// ---------------------------------------------------------------------------
+//  Ext Import implementations
+// ---------------------------------------------------------------------------
+
+void SPIRVSimulator::GLSLExtHandler(
+    uint32_t type_id,
+    uint32_t result_id,
+    uint32_t instruction_literal,
+    const std::span<const uint32_t>& operand_words
+){
+    const Type& type = types_.at(type_id);
+
+    switch(instruction_literal){
+        case 14:{  // Cos
+            const Value& operand = GetValue(operand_words[0]);
+
+            if (type.kind == Type::Kind::Vector){
+                if(!(std::holds_alternative<std::shared_ptr<VectorV>>(operand))){
+                    throw std::runtime_error("SPIRV simulator: Operands not of vector type in GLSLExtHandler::cos");
+                }
+
+                Value result = std::make_shared<VectorV>();
+                auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+                auto vec = std::get<std::shared_ptr<VectorV>>(operand);
+
+                for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+                    Value elem_result = (double)std::cos(std::get<double>(vec->elems[i]));
+                    result_vec->elems.push_back(elem_result);
+                }
+
+                SetValue(result_id, result_vec);
+
+            } else if (type.kind == Type::Kind::Float){
+                Value result = (double)std::cos(std::get<double>(operand));
+                SetValue(result_id, result);
+            }
+            break;
+        }
+        default:{
+            std::cout << "SPIRV simulator: Unhandled OpExtInst GLSL set operation: " << instruction_literal << std::endl;
+            std::cout << "SPIRV simulator: Setting output to default value, this will likely crash" << std::endl;
+            SetValue(result_id, MakeDefault(type_id));
+        }
+    }
+}
+
 
 // ---------------------------------------------------------------------------
 //  Type creation handlers
@@ -539,8 +587,6 @@ void SPIRVSimulator::T_Float(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_Vector(const Instruction& instruction){
-
-    std::cout << "VEC SIZE: " << instruction.words[3] << std::endl;
     Type type;
     type.kind = Type::Kind::Vector;
     type.vector = {
@@ -626,6 +672,29 @@ void SPIRVSimulator::T_Function(const Instruction&){
 // ---------------------------------------------------------------------------
 //  Oparation implementations
 // ---------------------------------------------------------------------------
+void SPIRVSimulator::Op_ExtInstImport(const Instruction& instruction){
+    /*
+    OpExtInstImport
+
+    Import an extended set of instructions. It can be later referenced by the Result <id>.
+
+    Name is the extended instruction-set’s name string. Before version 1.6, there must be an external specification defining the semantics
+    for this extended instruction set. Starting with version 1.6, if Name starts with "NonSemantic.", including the period that separates
+    the namespace "NonSemantic" from the rest of the name, it is encouraged for a specification to exist on the SPIR-V Registry,
+    but it is not required.
+
+    Starting with version 1.6, an extended instruction-set name which is prefixed with "NonSemantic." is guaranteed to contain only
+    non-semantic instructions, and all OpExtInst instructions referencing this set can be ignored. All instructions within such a set
+    must have only <id> operands; no literals. When literals are needed, then the Result <id> from an OpConstant or OpString instruction
+    is referenced as appropriate. Result <id>s from these non-semantic instruction-set instructions must be used only in other non-semantic
+    instructions.
+
+    See Extended Instruction Sets for more information.
+    */
+    uint32_t result_id = instruction.words[1];
+    extended_imports_[result_id] = std::string((char*)(&instruction.words[2]), instruction.word_count - 2);
+}
+
 void SPIRVSimulator::Op_Constant(const Instruction& instruction){
     /*
     OpConstant
@@ -1072,10 +1141,21 @@ void SPIRVSimulator::Op_ExtInst(const Instruction& instruction){
     */
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
-    //uint32_t set_id = instruction.words[2];
+    uint32_t set_id = instruction.words[3];
+    uint32_t instruction_literal = instruction.words[4];
 
-    std::cout << "SPIRV simulator: Setting OpExtInst result value to default, this is wrong and we need to implement this" << std::endl;
-    SetValue(result_id, MakeDefault(type_id));
+    if (extended_imports_.find(set_id) == extended_imports_.end()){
+
+    }
+
+    std::string set_literal = extended_imports_[set_id];
+    const std::span<const uint32_t> operand_words = std::span<const uint32_t>(instruction.words).subspan(5);
+    if (set_literal == "GLSL"){
+        GLSLExtHandler(type_id, result_id, instruction_literal, operand_words);
+    } else {
+        std::cout << std::setw(5) << "SPIRV simulator: Setting OpExtInst result value to default, this is wrong and we need to implement this" << std::endl;
+        SetValue(result_id, MakeDefault(type_id));
+    }
 }
 
 
@@ -1532,7 +1612,6 @@ void SPIRVSimulator::Op_UGreaterThanEqual(const Instruction& instruction){
 
     Results are computed per component.
     */
-
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t operand1_id = instruction.words[3];
@@ -1558,15 +1637,21 @@ void SPIRVSimulator::Op_UGreaterThanEqual(const Instruction& instruction){
         }
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
-            Value elem_result = (uint64_t)(std::get<uint64_t>(vec1->elems[i]) > std::get<uint64_t>(vec2->elems[i]));
-            result_vec->elems.push_back(elem_result);
+            if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec1->elems[i])){
+                Value elem_result = (uint64_t)(std::get<uint64_t>(vec1->elems[i]) >= std::get<uint64_t>(vec2->elems[i]));
+                result_vec->elems.push_back(elem_result);
+            } else {
+                throw std::runtime_error("SPIRV simulator: Found non-unsigned integer operand in Op_UGreaterThanEqual vector operands");
+            }
         }
 
         SetValue(result_id, result);
 
-    } else {
-        Value result = (uint64_t)(std::get<uint64_t>(val_op1) > std::get<uint64_t>(val_op2));
+    } else if (type.kind == Type::Kind::Bool){
+        Value result = (uint64_t)(std::get<uint64_t>(val_op1) >= std::get<uint64_t>(val_op2));
         SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type in Op_UGreaterThanEqual: " + std::to_string((uint32_t)(type.kind)) + ", must be vector or bool");
     }
 }
 
@@ -2005,11 +2090,52 @@ void SPIRVSimulator::Op_FOrdGreaterThan(const Instruction& instruction){
 
     Floating-point comparison if operands are ordered and Operand 1 is greater than Operand 2.
     Result Type must be a scalar or vector of Boolean type.
+
     The type of Operand 1 and Operand 2 must be a scalar or vector of floating-point type.
     They must have the same type, and they must have the same number of components as Result Type.
 
     Results are computed per component.
     */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand1_id = instruction.words[3];
+    uint32_t operand2_id = instruction.words[4];
+
+    const Type& type = types_.at(type_id);
+    const Value& val_op1 = GetValue(operand1_id);
+    const Value& val_op2 = GetValue(operand2_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            throw std::runtime_error("SPIRV simulator: Operands set to be vector type in Op_UGreaterThanEqual, but they are not, illegal input parameters");
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            throw std::runtime_error("SPIRV simulator: Operands are vector type but not of equal length in Op_UGreaterThanEqual");
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            if(std::holds_alternative<double>(vec1->elems[i]) && std::holds_alternative<double>(vec2->elems[i])){
+                Value elem_result = (uint64_t)(std::get<double>(vec1->elems[i]) > std::get<double>(vec2->elems[i]));
+                result_vec->elems.push_back(elem_result);
+            } else {
+                throw std::runtime_error("SPIRV simulator: Found non-floating point operand in Op_FOrdGreaterThan vector operands");
+            }
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Bool){
+        Value result = (uint64_t)(std::get<double>(val_op1) > std::get<double>(val_op2));
+        SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_FOrdGreaterThan, must be vector or float");
+    }
 }
 
 void SPIRVSimulator::Op_CompositeExtract(const Instruction& instruction){
@@ -2084,12 +2210,30 @@ void SPIRVSimulator::Op_Bitcast(const Instruction& instruction){
     If Result Type has the same number of components as Operand, they must also have the same component width, and results are computed per component.
 
     If Result Type has a different number of components than Operand, the total number of bits in Result Type must equal the total number of
-    bits in Operand. Let L be the type, either Result Type or Operand’s type, that has the larger number of components. Let S be the other type,
+    bits in Operand.
+
+    Let L be the type, either Result Type or Operand’s type, that has the larger number of components. Let S be the other type,
     with the smaller number of components. The number of components in L must be an integer multiple of the number of components in S.
     The first component (that is, the only or lowest-numbered component) of S maps to the first components of L, and so on, up to the last
     component of S mapping to the last components of L. Within this mapping, any single component of S (mapping to multiple components of L) maps
     its lower-ordered bits to the lower-numbered components of L.
     */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand_id = instruction.words[3];
+
+    const Type& type = types_.at(type_id);
+
+    // First, we extract all the data from the operands into a vector
+
+    // Ten we map this memory to the result value
+
+    if (type.kind == Type::Kind::Vector){
+
+    } else if (type.kind == Type::Kind::Int){
+    } else if (type.kind == Type::Kind::Float){}
+
+    std::cout << "BITCAST UNFINISHED; THIS WILL LIKELY CRASH!" << std::endl;
 }
 
 void SPIRVSimulator::Op_IMul(const Instruction& instruction){

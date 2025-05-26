@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -149,7 +150,7 @@ private:
     uint32_t prev_defined_func_id_;
     std::unordered_map<uint32_t, FunctionInfo> funcs_;
 
-    std::unordered_map<uint32_t, uint32_t> extended_imports_;
+    std::unordered_map<uint32_t, std::string> extended_imports_;
 
     // Control flow
     uint32_t prev_block_id_ = 0;
@@ -170,6 +171,14 @@ private:
     // Dispatcher
     using DispatcherType = std::function<void(const Instruction&)>;
     std::unordered_map<spv::Op, DispatcherType> opcode_dispatchers_;
+
+    // Handlers used by the OpExtInst handler
+    // Implementation of the opartions in the GLSL extended set
+    void GLSLExtHandler(
+        uint32_t type_id,
+        uint32_t result_id,
+        uint32_t instruction_literal,
+        const std::span<const uint32_t>& operand_words);
 
     // Helpers
     void DecodeHeader();
@@ -200,6 +209,7 @@ private:
     void T_ForwardPointer(const Instruction&);
     void T_RuntimeArray(const Instruction&);
     void T_Function(const Instruction&);
+    void Op_ExtInstImport(const Instruction&);
     void Op_Constant(const Instruction&);
     void Op_ConstantComposite(const Instruction&);
     void Op_CompositeConstruct(const Instruction&);
