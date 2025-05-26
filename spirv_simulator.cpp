@@ -1,0 +1,1431 @@
+#include "spirv_simulator.hpp"
+
+constexpr uint32_t kWordCountShift = 16u;
+constexpr uint32_t kOpcodeMask = 0xFFFFu;
+
+
+void DecodeInstruction(std::span<const uint32_t>& program_words, Instruction& instruction){
+    uint32_t first = program_words.front();
+    instruction.word_count = first >> kWordCountShift;
+    instruction.opcode = (spv::Op)(first & kOpcodeMask);
+    if(!instruction.word_count || instruction.word_count > program_words.size()){
+        throw std::runtime_error("SPIRV simulator: Bad instruction size");
+    }
+
+    instruction.words = program_words.first(instruction.word_count);
+    program_words = program_words.subspan(instruction.word_count);
+}
+
+SPIRVSimulator::SPIRVSimulator(std::vector<uint32_t> program_words, bool verbose): verbose_(verbose), program_words_(std::move(program_words)){
+    stream_ = program_words_;
+    DecodeHeader();
+    RegisterOpcodeHandlers();
+    ParseAll();
+    Validate();
+}
+
+void SPIRVSimulator::DecodeHeader(){
+    if(program_words_.size() < 5){
+        throw std::runtime_error("SPIRV simulator: Bad header");
+    }
+
+    uint32_t magic_number = program_words_[0];
+    if (magic_number != 0x07230203)
+    {
+        // TODO: Print a warning or something, dont necessarily need to abort here
+    }
+    /*
+    uint32_t version = program_words_[1];
+    uint32_t generator = program_words_[2];
+    uint32_t bound = program_words_[3];
+    uint32_t schema = program_words_[4];
+    */
+
+    // TODO: Print some info
+
+    stream_ = std::span<const uint32_t>(program_words_).subspan(5);
+}
+
+void SPIRVSimulator::RegisterOpcodeHandlers(){
+    auto R = [this](spv::Op op, DispatcherType f){
+        opcode_dispatchers_[op] = std::move(f);
+    };
+
+    R(spv::Op::OpTypeVoid,               [this](const Instruction& i){T_Void(i);});
+    R(spv::Op::OpTypeBool,               [this](const Instruction& i){T_Bool(i);});
+    R(spv::Op::OpTypeInt,                [this](const Instruction& i){T_Int(i);});
+    R(spv::Op::OpTypeFloat,              [this](const Instruction& i){T_Float(i);});
+    R(spv::Op::OpTypeVector,             [this](const Instruction& i){T_Vector(i);});
+    R(spv::Op::OpTypeMatrix,             [this](const Instruction& i){T_Matrix(i);});
+    R(spv::Op::OpTypeArray,              [this](const Instruction& i){T_Array(i);});
+    R(spv::Op::OpTypeStruct,             [this](const Instruction& i){T_Struct(i);});
+    R(spv::Op::OpTypePointer,            [this](const Instruction& i){T_Pointer(i);});
+    R(spv::Op::OpTypeForwardPointer,     [this](const Instruction& i){T_ForwardPointer(i);});
+    R(spv::Op::OpTypeRuntimeArray,       [this](const Instruction& i){T_RuntimeArray(i);});
+    R(spv::Op::OpTypeFunction,           [this](const Instruction& i){T_Function(i);});
+    R(spv::Op::OpConstant,               [this](const Instruction& i){Op_Constant(i);});
+    R(spv::Op::OpConstantComposite,      [this](const Instruction& i){Op_ConstantComposite(i);});
+    R(spv::Op::OpCompositeConstruct,     [this](const Instruction& i){Op_CompositeConstruct(i);});
+    R(spv::Op::OpVariable,               [this](const Instruction& i){Op_Variable(i);});
+    R(spv::Op::OpLoad,                   [this](const Instruction& i){Op_Load(i);});
+    R(spv::Op::OpStore,                  [this](const Instruction& i){Op_Store(i);});
+    R(spv::Op::OpAccessChain,            [this](const Instruction& i){Op_AccessChain(i);});
+    R(spv::Op::OpInBoundsAccessChain,    [this](const Instruction& i){Op_AccessChain(i);});
+    R(spv::Op::OpFunction,               [this](const Instruction& i){Op_Function(i);});
+    R(spv::Op::OpFunctionEnd,            [this](const Instruction& i){Op_FunctionEnd(i);});
+    R(spv::Op::OpFunctionCall,           [this](const Instruction& i){Op_FunctionCall(i);});
+    R(spv::Op::OpLabel,                  [this](const Instruction& i){Op_Label(i);});
+    R(spv::Op::OpBranch,                 [this](const Instruction& i){Op_Branch(i);});
+    R(spv::Op::OpBranchConditional,      [this](const Instruction& i){Op_BranchConditional(i);});
+    R(spv::Op::OpReturn,                 [this](const Instruction& i){Op_Return(i);});
+    R(spv::Op::OpReturnValue,            [this](const Instruction& i){Op_ReturnValue(i);});
+    R(spv::Op::OpINotEqual,              [this](const Instruction& i){Op_INotEqual(i);});
+    R(spv::Op::OpFAdd,                   [this](const Instruction& i){Op_FAdd(i);});
+    R(spv::Op::OpExtInst,                [this](const Instruction& i){Op_ExtInst(i);});
+    R(spv::Op::OpSelectionMerge,         [this](const Instruction& i){Op_SelectionMerge(i);});
+    R(spv::Op::OpFMul,                   [this](const Instruction& i){Op_FMul(i);});
+    R(spv::Op::OpLoopMerge,              [this](const Instruction& i){Op_LoopMerge(i);});
+    R(spv::Op::OpIAdd,                   [this](const Instruction& i){Op_IAdd(i);});
+    R(spv::Op::OpLogicalNot,             [this](const Instruction& i){Op_LogicalNot(i);});
+    R(spv::Op::OpCapability,             [this](const Instruction& i){Op_Capability(i);});
+    R(spv::Op::OpExtension,              [this](const Instruction& i){Op_Extension(i);});
+    R(spv::Op::OpMemoryModel,            [this](const Instruction& i){Op_MemoryModel(i);});
+    R(spv::Op::OpExecutionMode,          [this](const Instruction& i){Op_ExecutionMode(i);});
+    R(spv::Op::OpSource,                 [this](const Instruction& i){Op_Source(i);});
+    R(spv::Op::OpSourceExtension,        [this](const Instruction& i){Op_SourceExtension(i);});
+    R(spv::Op::OpName,                   [this](const Instruction& i){Op_Name(i);});
+    R(spv::Op::OpMemberName,             [this](const Instruction& i){Op_MemberName(i);});
+    R(spv::Op::OpDecorate,               [this](const Instruction& i){Op_Decorate(i);});
+    R(spv::Op::OpMemberDecorate,         [this](const Instruction& i){Op_MemberDecorate(i);});
+    R(spv::Op::OpArrayLength,            [this](const Instruction& i){Op_ArrayLength(i);});
+    R(spv::Op::OpSpecConstant,           [this](const Instruction& i){Op_SpecConstant(i);});
+    R(spv::Op::OpSpecConstantOp,         [this](const Instruction& i){Op_SpecConstantOp(i);});
+    R(spv::Op::OpSpecConstantComposite,  [this](const Instruction& i){Op_SpecConstantComposite(i);});
+    R(spv::Op::OpUGreaterThanEqual,      [this](const Instruction& i){Op_UGreaterThanEqual(i);});
+}
+
+void SPIRVSimulator::Validate(){
+    // TODO: Expand this (a lot)
+    for(auto &[id, t] : types_){
+        if(t.kind == Type::Kind::Array || t.kind == Type::Kind::Vector){
+            if(!types_.contains(t.vector.elem_type_id)){
+                throw std::runtime_error("SPIRV simulator: Missing elem type");
+            }
+        }
+        if(t.kind == Type::Kind::Matrix && !types_.contains(t.matrix.col_type_id)){
+            throw std::runtime_error("SPIRV simulator: Missing col type");
+        }
+        if(t.kind == Type::Kind::Pointer && !types_.contains(t.pointer.pointee_type_id)){
+            throw std::runtime_error("SPIRV simulator: Missing pointee type");
+        }
+    }
+}
+
+void SPIRVSimulator::ParseAll(){
+    size_t instruction_index = 0;
+
+    if (verbose_){
+        std::cout << "SPIRV simulator: Parsing instructions:" << std::endl;
+    }
+
+    bool in_function = false;
+
+    std::vector<uint32_t> unimplemented_instructions;
+
+    while(!stream_.empty()){
+        Instruction instruction;
+        DecodeInstruction(stream_, instruction);
+        instructions_.push_back(instruction);
+
+        bool has_result = false;
+        bool has_type = false;
+
+        spv::HasResultAndType(instruction.opcode, &has_result, &has_type);
+
+        if (has_result){
+            if (has_type){
+                result_id_to_inst_index_[instruction.words[2]] = instruction_index;
+            } else {
+                result_id_to_inst_index_[instruction.words[1]] = instruction_index;
+            }
+        }
+
+        if (verbose_){
+            PrintInstruction(instruction);
+        }
+
+        switch (instruction.opcode){
+            case spv::Op::OpFunction:{
+                in_function = true;
+                funcs_[instruction.words[2]] = {instruction_index, instruction_index + 1, {}, {}};
+                prev_defined_func_id_ = instruction.words[2];
+                break;
+            }
+            case spv::Op::OpFunctionEnd:
+                in_function = false;
+                break;
+            case spv::Op::OpFunctionParameter:{
+                funcs_[prev_defined_func_id_].parameter_ids_.push_back(instruction.words[2]);
+                funcs_[prev_defined_func_id_].parameter_type_ids_.push_back(instruction.words[1]);
+                break;
+            }
+            case spv::Op::OpEntryPoint:{
+                entry_points_.push_back(instruction.words[2]); // word[2] is <entry‑point id>
+                break;
+            }
+            case spv::Op::OpExtInstImport:{
+                extended_imports_[instruction.words[1]] = 0;  // Just crash it until we figure out how to handle these
+                break;
+            }
+            default:{
+                if (!in_function){
+                    ExecuteInstruction(instruction);
+                }
+                break;
+            }
+        }
+
+        ++instruction_index;
+    }
+
+    if (verbose_){
+        std::cout << "SPIRV simulator: Parsing complete!\n" << std::endl;
+    }
+
+    if (unimplemented_instructions_.size() && verbose_){
+        // TODO: Deduplicate, probably better to use a map to track the ids
+        std::cout << "SPIRV simulator: The following global scope instructions are unsupported:" << std::endl;
+
+        for (auto instruction : unimplemented_instructions_){
+            
+            PrintInstruction(instruction);
+        }
+
+        std::cout << std::endl;
+    }
+}
+
+void SPIRVSimulator::Run(){
+    // TODO: Add input data
+
+    if(funcs_.empty()){
+        std::cerr << "SPIRV simulator: No functions defined in the shader, cannot start execution" << std::endl;
+        return;
+    }
+
+    if (verbose_){
+        std::cout << "SPIRV simulator: Starting execution:" << std::endl;
+    }
+
+    // TODO: Take entry points from input data
+    for (uint32_t entry_point : entry_points_){
+        if (funcs_.find(entry_point) == funcs_.end()){
+            if (verbose_){
+                std::cout << "SPIRV simulator: Warning, entry point function with index: " << entry_point << " not found!" << std::endl;
+            }
+            continue;
+        }
+
+        FunctionInfo& function_info = funcs_[entry_point];
+        // We can set the return value to whatever, ignored if the call stack is emptu on return
+        call_stack_.push_back({function_info.first_inst_index, 0, {}, {}});
+
+        while(!call_stack_.empty()){
+            auto& stack_frame = call_stack_.back();
+            const Instruction& instruction = instructions_[stack_frame.pc++];
+
+            if (verbose_){
+                PrintInstruction(instruction);
+            }
+
+           ExecuteInstruction(instruction);
+        }
+    }
+
+    if (verbose_){
+        std::cout << "SPIRV simulator: Execution complete!\n" << std::endl;
+    }
+}
+
+void SPIRVSimulator::ExecuteInstruction(const Instruction& instruction){
+    auto dispatcher = opcode_dispatchers_.find(instruction.opcode);
+    if(dispatcher == opcode_dispatchers_.end()){
+        HandleUnimplementedOpcode(instruction);
+    }
+    else{
+        dispatcher->second(instruction);
+    }
+}
+
+void SPIRVSimulator::HandleUnimplementedOpcode(const Instruction& instruction){
+    unimplemented_instructions_.push_back(instruction);
+}
+
+void SPIRVSimulator::PrintInstruction(const Instruction& instruction){
+    bool has_result = false;
+    bool has_type = false;
+
+    spv::HasResultAndType(instruction.opcode, &has_result, &has_type);
+
+    if (verbose_){
+        uint32_t result_offset = 0;
+        if (has_result){
+            if (has_type){
+                result_offset = 2;
+            } else {
+                result_offset = 1;
+            }
+        }
+            
+        if (result_offset){
+            std::cout << std::setw(4) << instruction.words[result_offset] << " ";
+        } else {
+            std::cout << std::setw(5) << " ";
+        }
+
+        std::cout << spv::OpToString(instruction.opcode) << " "; 
+        for (uint32_t i = 1; i < instruction.word_count; ++i){
+            if (i == result_offset){
+                continue;
+            }
+            std::cout << instruction.words[i] << " ";
+        }
+
+        std::cout << std::endl;
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Value creation helpers
+// ---------------------------------------------------------------------------
+
+Value SPIRVSimulator::MakeScalar(uint32_t type_id, const std::span<const uint32_t>& words){
+    const Type& type = types_.at(type_id);
+
+    switch(type.kind){
+        case Type::Kind::Int:
+            if (type.scalar.width > 64){
+                throw std::runtime_error("SPIRV simulator: We do not support types wider than 64 bits");;
+            }
+            else if (type.scalar.width > 32){
+                if (type.scalar.is_signed){
+                    int64_t tmp_value;
+                    std::memcpy(&tmp_value, &words[0], 8);
+                    return tmp_value;
+                } else {
+                    return (static_cast<uint64_t>(words[1]) << 32) | words[0];
+                }
+            } else {
+                if (type.scalar.is_signed){
+                    int32_t tmp_value;
+                    std::memcpy(&tmp_value, &words[0], 4);
+                    return (int64_t)tmp_value;
+                } else {
+                    return (uint64_t)words[0];
+                }
+            }
+        case Type::Kind::Bool:
+            // Just treat bools as uint64_t types for simplicity
+            return (uint64_t)words[0];
+        case Type::Kind::Float:{
+            if (type.scalar.width > 64){
+                throw std::runtime_error("SPIRV simulator: We do not support types wider than 64 bits");;
+            }
+            else if (type.scalar.width > 32){
+                double tmp_value;
+                std::memcpy(&tmp_value, &words[0], 8);
+                return tmp_value;
+            } else {
+                float tmp_value;
+                std::memcpy(&tmp_value, &words[0], 4);
+                return (double)tmp_value;
+            }
+        }
+        default:{
+            throw std::runtime_error("SPIRV simulator: Unsupported scalar type, instructions are possibly corrupt");
+        }
+    }
+}
+
+Value SPIRVSimulator::MakeDefault(uint32_t type_id){
+    const Type& type = types_.at(type_id);
+    switch(type.kind){
+        case Type::Kind::Int:
+        case Type::Kind::Float:
+        case Type::Kind::Bool:{
+            const uint32_t empty_array[]{0,0};
+            std::span<const uint32_t> empty_span{empty_array};
+
+            return MakeScalar(type_id, empty_span);
+        }
+        case Type::Kind::Vector:{
+            auto vec = std::make_shared<VectorV>();
+            vec->elems.assign(type.vector.elem_count, uint64_t{0});
+
+            return vec;
+        }
+        case Type::Kind::Matrix:{
+            auto matrix = std::make_shared<MatrixV>();
+            for(uint32_t i = 0; i < type.matrix.col_count; ++i){
+                auto col = std::make_shared<VectorV>();
+                col->elems.assign(types_.at(type.matrix.col_type_id).vector.elem_count, uint64_t{0});
+                Value mat_val = col;
+                matrix->cols.push_back(mat_val);
+            }
+
+            return matrix;
+        }
+        case Type::Kind::Array:{
+            uint64_t len = std::get<uint64_t>(GetValue(type.array.length_id));
+            auto aggregate = std::make_shared<AggregateV>();
+            aggregate->elems.reserve(len);
+            for(uint32_t i = 0; i < len; ++i){
+                aggregate->elems.push_back(MakeDefault(type.array.elem_type_id));
+            }
+
+            return aggregate;
+        }
+        case Type::Kind::Struct:{
+            auto structure = std::make_shared<AggregateV>();
+            for(auto member : struct_members_.at(type_id)){
+                structure->elems.push_back(MakeDefault(member));
+            }
+
+            return structure;
+        }
+        default:{
+            return std::monostate{};
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Dereference and access helpers
+// ---------------------------------------------------------------------------
+Value& SPIRVSimulator::Deref(const PointerV &ptr){
+    // TODO: Double check correctness here after refactor
+    auto& heap = (ptr.storage_class == (uint32_t)spv::StorageClass::StorageClassFunction)
+        ? call_stack_.back().func_heap : Heap(ptr.storage_class);
+
+    Value* value = &heap.at(ptr.obj_id);
+    for(size_t depth = 0; depth < ptr.idx_path.size(); ++depth){
+        uint32_t i = ptr.idx_path[depth];
+
+        if(std::holds_alternative<std::shared_ptr<AggregateV>>(*value)){
+            auto agg = std::get<std::shared_ptr<AggregateV>>(*value);
+
+            if(i >= agg->elems.size()){
+                throw std::runtime_error("SPIRV simulator: Aggregate index OOB");
+            }
+
+            value = &agg->elems[i];
+        } else if (std::holds_alternative<std::shared_ptr<VectorV>>(*value)){
+            auto vec = std::get<std::shared_ptr<VectorV>>(*value);
+
+            if(i >= vec->elems.size()){
+                throw std::runtime_error("SPIRV simulator: Vector index OOB");
+            }
+
+            value = &vec->elems[i];
+        } else if (std::holds_alternative<std::shared_ptr<MatrixV>>(*value)){
+            auto matrix = std::get<std::shared_ptr<MatrixV>>(*value);
+
+            if(i >= matrix->cols.size()){
+                throw std::runtime_error("SPIRV simulator: Vector index OOB");
+            }
+
+            value = &matrix->cols[i];
+        }
+        else{
+            throw std::runtime_error("SPIRV simulator: Pointer dereference into non-composite object");
+        }
+    }
+
+    return *value;
+}
+
+Value& SPIRVSimulator::GetValue(uint32_t result_id){
+    for (auto riter = call_stack_.rbegin(); riter != call_stack_.rend(); ++riter) { 
+        if (riter->locals.find(result_id) != riter->locals.end()){
+            return riter->locals.at(result_id);
+        }
+    }
+
+    if (globals_.find(result_id) == globals_.end()){
+        throw std::runtime_error("SPIRV simulator: Access to undefined variable");
+    }
+
+    return globals_.at(result_id);
+}
+
+void SPIRVSimulator::SetValue(uint32_t result_id, const Value& value){
+    if (call_stack_.size()){
+        call_stack_.back().locals[result_id] = value;
+    } else {
+        globals_[result_id] = value;
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+//  Type creation handlers
+// ---------------------------------------------------------------------------
+void SPIRVSimulator::T_Void(const Instruction& instruction){
+
+    Type type;
+    type.kind = Type::Kind::Void;
+    type.scalar = {
+        0,
+        false
+    };
+
+    types_[instruction.words[1]] = type;
+}
+
+void SPIRVSimulator::T_Bool(const Instruction& instruction){
+    // We treat bools as 64 bit unsigned ints for simplicity
+    Type type;
+    type.kind = Type::Kind::Bool;
+    type.scalar = {
+        64,
+        false
+    };
+
+    types_[instruction.words[1]] = type;
+}
+
+void SPIRVSimulator::T_Int(const Instruction& instruction){
+    Type type;
+    type.kind = Type::Kind::Int;
+    type.scalar = {
+        instruction.words[2],
+        (bool)instruction.words[3]
+    };
+
+    types_[instruction.words[1]] = type;
+}
+
+void SPIRVSimulator::T_Float(const Instruction& instruction){
+    // We dont handle floats encoded in other formats than the default at present
+    if (instruction.word_count > 3){
+        throw std::runtime_error("SPIRV simulator only supports IEEE 754 encoded floats at present.");
+    }
+
+    Type type;
+    type.kind = Type::Kind::Float;
+    type.scalar = {
+        instruction.words[2],
+        false
+    };
+
+    types_[instruction.words[1]] = type;
+}
+
+void SPIRVSimulator::T_Vector(const Instruction& instruction){
+    Type type;
+    type.kind = Type::Kind::Vector;
+    type.vector = {
+        instruction.words[2],
+        instruction.words[3]
+    };
+
+    types_[instruction.words[1]] = type;
+}
+
+void SPIRVSimulator::T_Matrix(const Instruction& instruction){
+    Type type;
+    type.kind = Type::Kind::Matrix;
+    type.matrix = {
+        instruction.words[2],
+        instruction.words[3]
+    };
+    
+    types_[instruction.words[1]] = type;
+}
+
+void SPIRVSimulator::T_Array(const Instruction& instruction){
+    Type type;
+    type.kind = Type::Kind::Array;
+    type.array = {
+        instruction.words[2],
+        instruction.words[3]
+    };
+
+    types_[instruction.words[1]] = type;
+}
+
+void SPIRVSimulator::T_Struct(const Instruction& instruction){
+    Type type;
+    type.kind = Type::Kind::Struct;
+
+    types_[instruction.words[1]] = type;
+
+    std::vector<uint32_t> members;
+    for(auto i = 2; i < instruction.word_count; ++i){
+        members.push_back(instruction.words[i]);
+    }
+
+    struct_members_[instruction.words[1]] = std::move(members);
+}
+
+void SPIRVSimulator::T_Pointer(const Instruction& instruction){
+    Type type;
+    type.kind = Type::Kind::Pointer;
+    type.pointer = {
+        instruction.words[2],
+        instruction.words[3]
+    };
+    types_[instruction.words[1]] = type;
+}
+
+void SPIRVSimulator::T_ForwardPointer(const Instruction& instruction) {
+    // TODO: May not need this
+    uint32_t pointer_type_id = instruction.words[1];
+    uint32_t storage_class = instruction.words[2];
+    forward_type_declarations_[pointer_type_id] = storage_class;
+}
+
+void SPIRVSimulator::T_RuntimeArray(const Instruction& instruction) {
+    uint32_t result_id = instruction.words[1];
+    uint32_t elem_type_id = instruction.words[2];
+
+    Type type;
+    type.kind = Type::Kind::Array;
+    type.array = {
+        elem_type_id,
+        0
+    };
+    types_[result_id] = type;
+
+}
+
+void SPIRVSimulator::T_Function(const Instruction&){
+    // This info is redundant for us, so treat it as a NOP
+}
+
+
+// ---------------------------------------------------------------------------
+//  Oparation implementations
+// ---------------------------------------------------------------------------
+void SPIRVSimulator::Op_Constant(const Instruction& instruction){
+    /*
+    OpConstant
+    Declare a new integer-type or floating-point-type scalar constant.
+    Result Type must be a scalar integer type or floating-point type.
+    Value is the bit pattern for the constant. Types 32 bits wide or smaller take one word.
+    Larger types take multiple words, with low-order words appearing first.
+
+    SIMULATOR SPECIFIC: We dont support types with more than 64 bits at present.
+    SIMULATOR SPECIFIC: We only support IEEE 754 encoded floats at present.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    const Type& type = types_.at(type_id);
+
+    if ((type.kind != Type::Kind::Int) && (type.kind != Type::Kind::Float)) {
+        throw std::runtime_error("Constant type unsupported");
+    }
+
+    uint32_t width = type.scalar.width;
+    uint32_t width_in_words = width / (8 * 4);
+    if (width_in_words > 2){
+        throw std::runtime_error("We currently dont support types wider than 64 bits");
+    }
+
+    // These must be global
+    globals_[result_id] = MakeScalar(type_id, instruction.words.subspan(3));
+}
+
+void SPIRVSimulator::Op_ConstantComposite(const Instruction& instruction){
+    /*
+    OpConstantComposite
+
+    Declare a new composite constant.
+
+    Result Type must be a composite type, whose top-level members/elements/components/columns have the same type as the
+    types of the Constituents. The ordering must be the same between the top-level types in Result Type and the Constituents.
+
+    Constituents become members of a structure, or elements of an array, or components of a vector, or columns of a matrix.
+    There must be exactly one Constituent for each top-level member/element/component/column of the result.
+    The Constituents must appear in the order needed by the definition of the Result Type.
+    The Constituents must all be <id>s of non-specialization constant-instruction declarations or an OpUndef.
+    */
+    Op_CompositeConstruct(instruction);
+}
+
+void SPIRVSimulator::Op_CompositeConstruct(const Instruction& instruction){
+    /*
+    OpCompositeConstruct
+
+    Construct a new composite object from a set of constituent objects.
+
+    Result Type must be a composite type, whose top-level members/elements/components/columns have the same
+    type as the types of the operands, with one exception.
+
+    The exception is that for constructing a vector, the operands may also be vectors with the same component
+    type as the Result Type component type.
+
+    If constructing a vector, the total number of components in all the operands must equal
+    the number of components in Result Type.
+
+    Constituents become members of a structure, or elements of an array, or components of a vector, or columnsof a matrix.
+    There must be exactly one Constituent for each top-level member/element/component/column of the result,with one exception.
+
+    The exception is that for constructing a vector, a contiguous subset of the scalars consumed can be represented by
+    a vector operand instead.
+
+    The Constituents must appear in the order needed by the definition of the type of the result.
+    If constructing a vector, there must be at least two Constituent operands.
+
+    */
+    // Composite: An aggregate (structure or an array), a matrix, or a vector.
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    const Type& type = types_.at(type_id);
+
+    // TODO: There is some special sauce for vectors, handle the init from vector case
+    if(type.kind == Type::Kind::Vector){
+        auto vec = std::make_shared<VectorV>();
+        for(auto i = 3; i < instruction.word_count; ++i){
+            vec->elems.push_back(GetValue(instruction.words[i]));
+        }
+
+        SetValue(result_id, vec);
+    }
+    else if (type.kind == Type::Kind::Matrix){
+        auto matrix = std::make_shared<MatrixV>();
+        for(auto i = 3; i < instruction.word_count; ++i){
+            matrix->cols.push_back(GetValue(instruction.words[i]));
+        }
+
+        SetValue(result_id, matrix);
+    }
+    else if(type.kind == Type::Kind::Struct || type.kind == Type::Kind::Array){
+        auto aggregate = std::make_shared<AggregateV>();
+        for(auto i = 3; i < instruction.word_count; ++i){
+            aggregate->elems.push_back(GetValue(instruction.words[i]));
+        }
+
+        SetValue(result_id, aggregate);
+    }
+    else{
+        throw std::runtime_error("SPIRV simulator: CompositeConstruct not implemented yet for type");
+    }
+}
+
+void SPIRVSimulator::Op_Variable(const Instruction& instruction){
+    /*
+    OpVariable
+
+    Allocate an object in memory, resulting in a pointer to it, which can be used with OpLoad and OpStore.
+
+    Result Type must be an OpTypePointer. Its Type operand is the type of object in memory.
+    Storage Class is the Storage Class of the memory holding the object. It must not be Generic.
+    It must be the same as the Storage Class operand of the Result Type.
+
+    If Storage Class is Function, the memory is allocated on execution of the instruction for the current invocation for
+    each dynamic instance of the function. The current invocation’s memory is deallocated when it executes any function
+    termination instruction of the dynamic instance of the function it was allocated by.
+
+    Initializer is optional. If Initializer is present, it will be the initial value of the variable’s memory content.
+    Initializer must be an <id> from a constant instruction or a global (module scope) OpVariable instruction.
+    Initializer must have the same type as the type pointed to by Result Type.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t storage_class = instruction.words[3];
+
+    const Type& type = types_.at(type_id);
+
+    Value init;
+    if(instruction.word_count >= 5){
+        // The instruction has initialization data
+        init = GetValue(instruction.words[4]);
+    }
+    else{
+        // No init data, set to default
+        init = MakeDefault(type.kind == Type::Kind::Pointer ? type.pointer.pointee_type_id : type_id);
+    }
+
+    if(storage_class == (uint32_t)spv::StorageClass::StorageClassFunction){
+        call_stack_.back().func_heap[result_id] = init;
+    }
+    else{
+        Heap(storage_class)[result_id] = init;
+    }
+
+    PointerV new_pointer{result_id, storage_class, {}};
+    SetValue(result_id, new_pointer);
+}
+
+void SPIRVSimulator::Op_Load(const Instruction& instruction){
+    /*
+    OpLoad
+
+    Load through a pointer.
+
+    Result Type is the type of the loaded object. It must be a type with fixed size; i.e., it must not be, nor include,
+    any OpTypeRuntimeArray types.
+
+    Pointer is the pointer to load through.
+    Its type must be an OpTypePointer whose Type operand is the same as Result Type.
+
+    If present, any Memory Operands must begin with a memory operand literal.
+    If not present, it is the same as specifying the memory operand None.
+    */
+    uint32_t result_id = instruction.words[2];
+    const PointerV& pointer = std::get<PointerV>(GetValue(instruction.words[3]));
+    SetValue(result_id, Deref(pointer));
+}
+
+void SPIRVSimulator::Op_Store(const Instruction& instruction){
+    /*
+    OpStore
+
+    Store through a pointer.
+
+    Pointer is the pointer to store through. Its type must be an OpTypePointer whose Type operand is the same as the type of Object.
+    Object is the object to store.
+
+    If present, any Memory Operands must begin with a memory operand literal.
+    If not present, it is the same as specifying the memory operand None.
+    */
+    const PointerV& pointer = std::get<PointerV>(GetValue(instruction.words[1]));
+    Deref(pointer) = GetValue(instruction.words[2]);
+}
+
+void SPIRVSimulator::Op_AccessChain(const Instruction& instruction){
+    /*
+    OpAccessChain
+
+    Create a pointer into a composite object.
+
+    Result Type must be an OpTypePointer. Its Type operand must be the type reached by walking the Base’s type
+    hierarchy down to the last provided index in Indexes, and its Storage Class operand must be the same as the
+    Storage Class of Base.
+    If Result Type is an array-element pointer that is decorated with ArrayStride, its Array Stride must match the
+    Array Stride of the array’s type. If the array’s type is not decorated with ArrayStride, Result Type also must not
+    be decorated with ArrayStride.
+
+    Base must be a pointer, pointing to the base of a composite object.
+
+    Indexes walk the type hierarchy to the desired depth, potentially down to scalar granularity.
+    The first index in Indexes selects the top-level member/element/component/column of the base composite.
+    All composite constituents use zero-based numbering, as described by their OpType…​ instruction.
+    The second index applies similarly to that result, and so on. Once any non-composite type is reached, there must be
+    no remaining (unused) indexes.
+
+    Each index in Indexes
+    - must have a scalar integer type
+    - is treated as signed
+    - if indexing into a structure, must be an OpConstant whose value is in bounds for selecting a member
+    - if indexing into a vector, array, or matrix, with the result type being a logical pointer type,
+      causes undefined behavior if not in bounds.
+
+    SIMULATOR SPECIFIC: We dont support types with more than 64 bits at present.
+    */
+    uint32_t result_id = instruction.words[2];
+    uint32_t base_id = instruction.words[3];
+
+    PointerV pointer = std::get<PointerV>(GetValue(base_id));
+    for(auto i = 4; i < instruction.word_count; ++i){
+        const Value& index_value = GetValue(instruction.words[i]);
+
+        if (std::holds_alternative<uint64_t>(index_value)){
+            pointer.idx_path.push_back((uint32_t)std::get<uint64_t>(index_value));
+        } else {
+            // TODO: Error
+        }
+    }
+
+    SetValue(result_id, pointer);
+}
+
+void SPIRVSimulator::Op_Function(const Instruction&){
+    /*
+    OpFunction
+
+    Add a function. This instruction must be immediately followed by one OpFunctionParameter instruction per each
+    formal parameter of this function. This function’s body or declaration terminates with the next OpFunctionEnd instruction.
+
+    Result Type must be the same as the Return Type declared in Function Type.
+
+    Function Type is the result of an OpTypeFunction, which declares the types of the return value and parameters of the function.
+    */
+    // Nothing to do, we handle this when parsing instructions
+}
+
+void SPIRVSimulator::Op_FunctionEnd(const Instruction&){
+    // This is a NOP in our design
+}
+
+void SPIRVSimulator::Op_FunctionCall(const Instruction& instruction){
+    /*
+    OpFunctionCall
+
+    Call a function.
+
+    Result Type is the type of the return value of the function.
+    It must be the same as the Return Type operand of the Function Type operand of the Function operand.
+
+    Function is an OpFunction instruction. This could be a forward reference.
+
+    Argument N is the object to copy to parameter N of Function.
+
+    Note: A forward call is possible because there is no missing type information: Result Type must match the Return
+    Type of the function, and the calling argument types must match the formal parameter types.
+    */
+    uint32_t result_id = instruction.words[2];
+    uint32_t function_id = instruction.words[3];
+
+    FunctionInfo& function_info = funcs_[function_id];
+    call_stack_.push_back({function_info.first_inst_index, result_id, {}, {}});
+
+    for (auto i = 4; i < instruction.word_count; ++i){
+        // Push parameters to the local scope
+        call_stack_.back().locals[function_info.parameter_ids_[i]] = GetValue(instruction.words[i]);
+    }
+}
+
+void SPIRVSimulator::Op_Label(const Instruction&){
+    // This is a NOP in our design
+}
+
+void SPIRVSimulator::Op_Branch(const Instruction& instruction){
+    /*
+    OpBranch
+
+    Unconditional branch to Target Label.
+    Target Label must be the Result <id> of an OpLabel instruction in the current function.
+    This instruction must be the last instruction in a block.
+    */
+    // TODO: We should probably verify that the target instructions we are jumping to are labels
+    call_stack_.back().pc = result_id_to_inst_index_.at(instruction.words[1]);
+}
+
+void SPIRVSimulator::Op_BranchConditional(const Instruction& instruction){
+    /*
+    OpBranchConditional
+
+    If Condition is true, branch to True Label, otherwise branch to False Label.
+    Condition must be a Boolean type scalar.
+
+    True Label must be an OpLabel in the current function.
+    False Label must be an OpLabel in the current function.
+    Starting with version 1.6, True Label and False Label must not be the same <id>.
+    Branch weights are unsigned 32-bit integer literals. There must be either no Branch Weights or exactly two branch weights. If present, the first is the weight for branching to True Label, and the second is the weight for branching to False Label. The implied probability that a branch is taken is its weight divided by the sum of the two Branch weights. At least one weight must be non-zero. A weight of zero does not imply a branch is dead or permit its removal; branch weights are only hints. The sum of the two weights must not overflow a 32-bit unsigned integer.
+
+    This instruction must be the last instruction in a block.
+    */
+    uint64_t condition = std::get<uint64_t>(GetValue(instruction.words[1]));
+    call_stack_.back().pc = result_id_to_inst_index_.at(condition ? instruction.words[2] : instruction.words[3]);
+}
+
+void SPIRVSimulator::Op_Return(const Instruction&){
+    /*
+    OpReturn
+
+    Return with no value from a function with void return type.
+    This instruction must be the last instruction in a block.
+    */
+    call_stack_.pop_back();
+}
+
+void SPIRVSimulator::Op_ReturnValue(const Instruction& instruction){
+    /*
+    OpReturnValue
+
+    Return a value from a function.
+
+    Value is the value returned, by copy, and must match the Return Type operand of the OpTypeFunction
+    type of the OpFunction body this return instruction is in. Value must not have type OpTypeVoid.
+
+    This instruction must be the last instruction in a block.
+    */
+    uint32_t value_id = instruction.words[1];
+    uint32_t result_id = call_stack_.back().result_id;
+    Value return_value = GetValue(value_id);
+
+    call_stack_.pop_back();
+
+    if (call_stack_.size()){
+        SetValue(result_id, return_value);
+    }
+}
+
+void SPIRVSimulator::Op_FAdd(const Instruction& instruction){
+    /*
+    OpFAdd
+
+    Floating-point addition of Operand 1 and Operand 2.
+    Result Type must be a scalar or vector of floating-point type.
+    The types of Operand 1 and Operand 2 both must be the same as Result Type.
+
+    Results are computed per component.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            // TODO: Error
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            // TODO: Error
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            double elem_result = std::get<double>(vec1->elems[i]) + std::get<double>(vec2->elems[i]);
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else {
+        Value result;
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        // TODO: Check that they are doubles
+        result = std::get<double>(op1) + std::get<double>(op2);
+
+        SetValue(result_id, result);
+    }
+}
+
+
+void SPIRVSimulator::Op_ExtInst(const Instruction&){
+    /*
+    Execute an instruction in an imported set of extended instructions.
+
+    Result Type is defined, per Instruction, in the external specification for Set.
+    Set is the result of an OpExtInstImport instruction.
+    Instruction is the enumerant of the instruction to execute within Set.
+    It is an unsigned 32-bit integer. The semantics of the instruction are defined in the external specification for Set.
+
+    Operand 1, …​ are the operands to the extended instruction.
+    */
+}
+
+
+void SPIRVSimulator::Op_SelectionMerge(const Instruction&){
+    // This is a NOP in our design
+}
+
+void SPIRVSimulator::Op_FMul(const Instruction& instruction){
+    /*
+    OpFMul
+
+    Floating-point multiplication of Operand 1 and Operand 2.
+    Result Type must be a scalar or vector of floating-point type.
+    The types of Operand 1 and Operand 2 both must be the same as Result Type.
+
+    Results are computed per component.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            // TODO: Error
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            // TODO: Error
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            double elem_result = std::get<double>(vec1->elems[i]) * std::get<double>(vec2->elems[i]);
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else {
+        Value result;
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        // TODO: Check that they are doubles
+        result = std::get<double>(op1) * std::get<double>(op2);
+
+        SetValue(result_id, result);
+    }
+}
+
+void SPIRVSimulator::Op_LoopMerge(const Instruction&){
+    // This is a NOP in our design
+    // TODO: Double check this
+}
+
+void SPIRVSimulator::Op_INotEqual(const Instruction& instruction){
+    /*
+    OpINotEqual
+
+    Integer comparison for inequality.
+    Result Type must be a scalar or vector of Boolean type.
+
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type.
+    They must have the same component width, and they must have the same number of components as Result Type.
+    Results are computed per component.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            // TODO: Error
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            // TODO: Error
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            uint64_t elem_result;
+
+            // This should compare equal if different types but same number, so cant use variant operators here
+            // TODO: Refactor this and the similar blocks below
+            if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
+                elem_result = (uint64_t)(std::get<uint64_t>(vec1->elems[i]) != std::get<uint64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<int64_t>(vec2->elems[i])){
+                elem_result = (uint64_t)(std::get<uint64_t>(vec1->elems[i]) != std::get<int64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<int64_t>(vec2->elems[i])){
+                elem_result = (uint64_t)(std::get<int64_t>(vec1->elems[i]) != std::get<int64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
+                elem_result = (uint64_t)(std::get<int64_t>(vec1->elems[i]) != std::get<uint64_t>(vec2->elems[i]));
+            } else {
+                // TODO: Error
+            }
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else {
+        Value result;
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        if(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
+            result = (uint64_t)(std::get<uint64_t>(op1) != std::get<uint64_t>(op2));
+        } else if(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<int64_t>(op2)){
+            result = (uint64_t)(std::get<uint64_t>(op1) != std::get<int64_t>(op2));
+        } else if(std::holds_alternative<int64_t>(op1) && std::holds_alternative<int64_t>(op2)){
+            result = (uint64_t)(std::get<int64_t>(op1) != std::get<int64_t>(op2));
+        } else if(std::holds_alternative<int64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
+            result = (uint64_t)(std::get<int64_t>(op1) != std::get<uint64_t>(op2));
+        } else {
+            // TODO: Error
+        }
+
+        SetValue(result_id, result);
+    }
+}
+
+void SPIRVSimulator::Op_IAdd(const Instruction& instruction){
+    /*
+    OpIAdd
+
+    Integer addition of Operand 1 and Operand 2.
+
+    Result Type must be a scalar or vector of integer type.
+
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type. They must have the same number of components
+    as Result Type. They must have the same component width as Result Type.
+
+    The resulting value equals the low-order N bits of the correct result R, where N is the component
+    width and R is computed with enough precision to avoid overflow and underflow.
+
+    Results are computed per component.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            // TODO: Error
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            // TODO: Error
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result;
+
+            if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
+                elem_result = (std::get<uint64_t>(vec1->elems[i]) + std::get<uint64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<uint64_t>(vec1->elems[i]) + std::holds_alternative<int64_t>(vec2->elems[i])){
+                elem_result = (std::get<uint64_t>(vec1->elems[i]) + std::get<int64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) + std::holds_alternative<int64_t>(vec2->elems[i])){
+                elem_result = (std::get<int64_t>(vec1->elems[i]) + std::get<int64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) + std::holds_alternative<uint64_t>(vec2->elems[i])){
+                elem_result = (std::get<int64_t>(vec1->elems[i]) + std::get<uint64_t>(vec2->elems[i]));
+            } else {
+                // TODO: Error
+            }
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Int){
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        Value result;
+        if(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
+            result = (std::get<uint64_t>(op1) + std::get<uint64_t>(op2));
+        } else if(std::holds_alternative<uint64_t>(op1) + std::holds_alternative<int64_t>(op2)){
+            result = (std::get<uint64_t>(op1) + std::get<int64_t>(op2));
+        } else if(std::holds_alternative<int64_t>(op1) + std::holds_alternative<int64_t>(op2)){
+            result = (std::get<int64_t>(op1) + std::get<int64_t>(op2));
+        } else if(std::holds_alternative<int64_t>(op1) + std::holds_alternative<uint64_t>(op2)){
+            result = (std::get<int64_t>(op1) + std::get<uint64_t>(op2));
+        } else {
+            // TODO: Error
+        }
+
+        SetValue(result_id, result);
+    } else {
+        // TODO: Error
+    }
+}
+
+void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
+    /*
+    OpLogicalNot
+
+    Result is true if Operand is false. Result is false if Operand is true.
+    Result Type must be a scalar or vector of Boolean type.
+    The type of Operand must be the same as Result Type.
+
+    Results are computed per component.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+    const Value& operand = GetValue(operand_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        if(!std::holds_alternative<std::shared_ptr<VectorV>>(operand)){
+            // TODO: Error
+        }
+
+        auto vec = std::get<std::shared_ptr<VectorV>>(operand);
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            if (std::holds_alternative<double>(vec->elems[i])){
+                result_vec->elems.push_back((uint64_t)(!std::get<double>(vec->elems[i])));
+            } else if (std::holds_alternative<uint64_t>(vec->elems[i])){
+                result_vec->elems.push_back((uint64_t)!(std::get<uint64_t>(vec->elems[i])));
+            } else if (std::holds_alternative<int64_t>(vec->elems[i])){
+                result_vec->elems.push_back((uint64_t)!(std::get<int64_t>(vec->elems[i])));
+            } 
+        }
+
+        SetValue(result_id, result);
+    } else {
+        Value result;
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            if (std::holds_alternative<double>(operand)){
+                result = (uint64_t)(!std::get<double>(operand));
+            } else if (std::holds_alternative<uint64_t>(operand)){
+                result = (uint64_t)!(std::get<uint64_t>(operand));
+            } else if (std::holds_alternative<int64_t>(operand)){
+                result = (uint64_t)!(std::get<int64_t>(operand));
+            } 
+        }
+
+        SetValue(result_id, result);
+    }
+}
+
+void SPIRVSimulator::Op_Capability(const Instruction&) {
+    // This is a NOP in our design
+}
+
+void SPIRVSimulator::Op_Extension(const Instruction&) {
+    // This is a NOP in our design (at least for now)
+}
+
+void SPIRVSimulator::Op_MemoryModel(const Instruction&) {
+    // This is a NOP in our design
+}
+
+void SPIRVSimulator::Op_ExecutionMode(const Instruction&) {
+    // We will need this later
+}
+
+void SPIRVSimulator::Op_Source(const Instruction&) {
+    // This is a NOP in our design
+}
+
+void SPIRVSimulator::Op_SourceExtension(const Instruction&) {
+    // This is a NOP in our design
+}
+
+void SPIRVSimulator::Op_Name(const Instruction&) {
+    // We could use this for debug info later, for now we leave it as a NOP
+}
+
+void SPIRVSimulator::Op_MemberName(const Instruction&) {
+    // We could use this for debug info later, for now we leave it as a NOP
+}
+
+void SPIRVSimulator::Op_Decorate(const Instruction&) {
+    // We could use this for debug info later, for now we leave it as a NOP
+}
+
+void SPIRVSimulator::Op_MemberDecorate(const Instruction&) {
+    // We could use this for debug info later, for now we leave it as a NOP
+}
+
+void SPIRVSimulator::Op_ArrayLength(const Instruction& instruction){
+    //uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    //uint32_t structure_id = instruction.words[3];
+    //uint32_t array_member = instruction.words[4];
+
+    // TODO: Must query metadata here to find the length
+
+    SetValue(result_id, 0);
+}
+
+void SPIRVSimulator::Op_SpecConstant(const Instruction& instruction) {
+    /*
+    OpSpecConstant
+
+    Declare a new integer-type or floating-point-type scalar specialization constant.
+    Result Type must be a scalar integer type or floating-point type.
+    Value is the bit pattern for the default value of the constant. Types 32 bits wide or smaller take one word.
+    Larger types take multiple words, with low-order words appearing first.
+    This instruction can be specialized to become an OpConstant instruction.
+
+    See Specialization.
+    */
+    // TODO: May have to consume API side info here
+    Op_Constant(instruction);
+}
+
+void SPIRVSimulator::Op_SpecConstantOp(const Instruction& instruction) {
+    (void)instruction;
+    // TODO: Implement this
+}
+
+void SPIRVSimulator::Op_SpecConstantComposite(const Instruction& instruction) {
+    /*
+    OpSpecConstantComposite
+
+    Declare a new composite specialization constant.
+    Result Type must be a composite type, whose top-level members/elements/components/columns have the
+    same type as the types of the Constituents. The ordering must be the same between the top-level types in Result Type and the Constituents.
+    Constituents become members of a structure, or elements of an array, or components of a vector, or columns of a matrix.
+    There must be exactly one Constituent for each top-level member/element/component/column of the result.
+    The Constituents must appear in the order needed by the definition of the type of the result.
+    The Constituents must be the <id> of other specialization constants, constant declarations, or an OpUndef.
+    This instruction will be specialized to an OpConstantComposite instruction.
+
+    See Specialization.
+    */
+    // TODO: May have to consume API side info here
+    Op_ConstantComposite(instruction);
+}
+
+void SPIRVSimulator::Op_UGreaterThanEqual(const Instruction& instruction){
+    /*
+    OpUGreaterThanEqual
+
+    Unsigned-integer comparison if Operand 1 is greater than or equal to Operand 2.
+    Result Type must be a scalar or vector of Boolean type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type. They must have the same component width, and they must have the same number of components as Result Type.
+
+    Results are computed per component.
+    */
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand1_id = instruction.words[3];
+    uint32_t operand2_id = instruction.words[4];
+
+    const Type& type = types_.at(type_id);
+    const Value& val_op1 = GetValue(operand1_id);
+    const Value& val_op2 = GetValue(operand2_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            // TODO: Error
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            // TODO: Error
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result = (uint64_t)(std::get<uint64_t>(vec1->elems[i]) > std::get<uint64_t>(vec2->elems[i]));
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+
+    } else {
+        Value result = (uint64_t)(std::get<uint64_t>(val_op1) > std::get<uint64_t>(val_op2));
+        SetValue(result_id, result);
+    }
+}
