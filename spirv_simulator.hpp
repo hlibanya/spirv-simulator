@@ -35,6 +35,11 @@
 #include "spirv.hpp"
 #endif
 
+struct DecorationInfo{
+    spv::Decoration kind;
+    std::vector<uint32_t> literals;
+};
+
 struct Instruction{
     spv::Op opcode;
 
@@ -146,6 +151,8 @@ private:
     std::vector<Instruction> unimplemented_instructions_;
     std::unordered_map<uint32_t, uint32_t> forward_type_declarations_;
     std::unordered_map<uint32_t, void*> result_id_to_external_pointer_;
+    std::unordered_map<uint32_t, std::vector<DecorationInfo>> decorators_;
+    std::unordered_map<uint32_t, std::unordered_map<uint32_t, std::vector<DecorationInfo>>> struct_decorators_;
 
     struct FunctionInfo{
         size_t inst_index;
@@ -179,7 +186,7 @@ private:
     std::unordered_map<spv::Op, DispatcherType> opcode_dispatchers_;
 
     // Handlers used by the OpExtInst handler
-    // Implementation of the opartions in the GLSL extended set
+    // Implementation of the operations in the GLSL extended set
     void GLSLExtHandler(
         uint32_t type_id,
         uint32_t result_id,

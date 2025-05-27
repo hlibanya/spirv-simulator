@@ -313,7 +313,22 @@ void SPIRVSimulator::PrintInstruction(const Instruction& instruction){
             if (i == result_offset){
                 continue;
             }
-            std::cout << instruction.words[i] << " ";
+
+            if (instruction.opcode == spv::Op::OpDecorate){
+                if (i == 2) {
+                    std::cout << spv::DecorationToString((spv::Decoration)instruction.words[i]) << " ";
+                } else {
+                    std::cout << instruction.words[i] << " ";
+                }
+            }else if(instruction.opcode == spv::Op::OpMemberDecorate){
+                if (i == 3) {
+                    std::cout << spv::DecorationToString((spv::Decoration)instruction.words[i]) << " ";
+                } else {
+                    std::cout << instruction.words[i] << " ";
+                }
+            } else {
+                std::cout << instruction.words[i] << " ";
+            }
         }
 
         std::cout << std::endl;
@@ -408,6 +423,7 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id){
             if (type.array.length_id == 0){
                 // This is a OpTypeRuntimeArray
                 // Length is either set by OpArrayLength or it is unknown
+                std::cout << "SPIRV simulator: WARNING not handling runtime array length at present, setting to 1 which will crash with OOB errors in most cases" << std::endl;
                 len = 1;
             } else {
                 len = std::get<uint64_t>(GetValue(type.array.length_id));
@@ -590,7 +606,7 @@ void SPIRVSimulator::T_Int(const Instruction& instruction){
 void SPIRVSimulator::T_Float(const Instruction& instruction){
     // We dont handle floats encoded in other formats than the default at present
     if (instruction.word_count > 3){
-        throw std::runtime_error("SPIRV simulator only supports IEEE 754 encoded floats at present.");
+        throw std::runtime_error("SPIRV simulator: Simulator only supports IEEE 754 encoded floats at present.");
     }
 
     Type type;
@@ -709,6 +725,7 @@ void SPIRVSimulator::Op_ExtInstImport(const Instruction& instruction){
     See Extended Instruction Sets for more information.
     */
     uint32_t result_id = instruction.words[1];
+    // SPIRV string literals are UTF-8 encoded, so basic c++ string functionality can be used to decode them
     extended_imports_[result_id] = std::string((char*)(&instruction.words[2]), instruction.word_count - 2);
 }
 
@@ -719,26 +736,16 @@ void SPIRVSimulator::Op_Constant(const Instruction& instruction){
     Result Type must be a scalar integer type or floating-point type.
     Value is the bit pattern for the constant. Types 32 bits wide or smaller take one word.
     Larger types take multiple words, with low-order words appearing first.
-
-    SIMULATOR SPECIFIC: We dont support types with more than 64 bits at present.
-    SIMULATOR SPECIFIC: We only support IEEE 754 encoded floats at present.
     */
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     const Type& type = types_.at(type_id);
 
     if ((type.kind != Type::Kind::Int) && (type.kind != Type::Kind::Float)) {
-        throw std::runtime_error("Constant type unsupported");
+        throw std::runtime_error("SPIRV simulator: Constant type unsupported");
     }
 
-    uint32_t width = type.scalar.width;
-    uint32_t width_in_words = width / (8 * 4);
-    if (width_in_words > 2){
-        throw std::runtime_error("We currently dont support types wider than 64 bits");
-    }
-
-    // These must be global
-    globals_[result_id] = MakeScalar(type_id, instruction.words.subspan(3));
+    SetValue(result_id, MakeScalar(type_id, instruction.words.subspan(3)));
 }
 
 void SPIRVSimulator::Op_ConstantComposite(const Instruction& instruction){
@@ -788,7 +795,6 @@ void SPIRVSimulator::Op_CompositeConstruct(const Instruction& instruction){
     uint32_t result_id = instruction.words[2];
     const Type& type = types_.at(type_id);
 
-    // TODO: There is some special sauce for vectors, handle the init from vector case
     if(type.kind == Type::Kind::Vector){
         auto vec = std::make_shared<VectorV>();
         for(auto i = 3; i < instruction.word_count; ++i){
@@ -1471,7 +1477,7 @@ void SPIRVSimulator::Op_MemoryModel(const Instruction&) {
 }
 
 void SPIRVSimulator::Op_ExecutionMode(const Instruction&) {
-    // We will need this later
+    // We may will need this later
 }
 
 void SPIRVSimulator::Op_Source(const Instruction&) {
@@ -1490,12 +1496,53 @@ void SPIRVSimulator::Op_MemberName(const Instruction&) {
     // We could use this for debug info later, for now we leave it as a NOP
 }
 
-void SPIRVSimulator::Op_Decorate(const Instruction&) {
-    // We could use this for debug info later, for now we leave it as a NOP
+void SPIRVSimulator::Op_Decorate(const Instruction& instruction) {
+    /*
+    OpDecorate
+
+    Add a Decoration to another <id>.
+
+    Target is the <id> to decorate. It can potentially be any <id> that is a forward reference.
+    A set of decorations can be grouped together by having multiple decoration instructions targeting the same
+    OpDecorationGroup instruction.
+
+    This instruction is only valid if the Decoration operand is a decoration that takes no Extra Operands, or takes
+    Extra Operands that are not <id> operands.
+    */
+
+    uint32_t target_id = instruction.words[1];
+    spv::Decoration kind = static_cast<spv::Decoration>(instruction.words[2]);
+
+    std::vector<uint32_t> literals;
+    for (uint32_t i = 3; i < instruction.word_count; ++i){
+        literals.push_back(instruction.words[i]);
+    }
+
+    DecorationInfo info{kind, std::move(literals)};
+    decorators_[target_id].emplace_back(std::move(info));
 }
 
-void SPIRVSimulator::Op_MemberDecorate(const Instruction&) {
-    // We could use this for debug info later, for now we leave it as a NOP
+void SPIRVSimulator::Op_MemberDecorate(const Instruction& instruction) {
+    /*
+    OpMemberDecorate
+
+    Add a Decoration to a member of a structure type.
+    Structure type is the <id> of a type from OpTypeStruct.
+    Member is the number of the member to decorate in the type. The first member is member 0, the next is member 1, …​
+
+    Note: See OpDecorate for creating groups of decorations for consumption by OpGroupMemberDecorate
+    */
+    uint32_t structure_type_id = instruction.words[1];
+    uint32_t member_literal = instruction.words[2];
+    spv::Decoration kind = static_cast<spv::Decoration>(instruction.words[3]);
+
+    std::vector<uint32_t> literals;
+    for (uint32_t i = 4; i < instruction.word_count; ++i){
+        literals.push_back(instruction.words[i]);
+    }
+
+    DecorationInfo info{kind, std::move(literals)};
+    struct_decorators_[structure_type_id][member_literal].emplace_back(std::move(info));
 }
 
 void SPIRVSimulator::Op_ArrayLength(const Instruction& instruction){
