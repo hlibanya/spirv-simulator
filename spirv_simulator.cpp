@@ -194,10 +194,6 @@ void SPIRVSimulator::ParseAll(){
                 entry_points_.push_back(instruction.words[2]); // word[2] is <entry‑point id>
                 break;
             }
-            /*case spv::Op::OpExtInstImport:{
-                extended_imports_[instruction.words[1]] = 0;
-                break;
-            }*/
             default:{
                 if (!in_function){
                     ExecuteInstruction(instruction);
@@ -337,25 +333,29 @@ void SPIRVSimulator::PrintInstruction(const Instruction& instruction){
         }
 
         std::cout << spv::OpToString(instruction.opcode) << " "; 
-        for (uint32_t i = 1; i < instruction.word_count; ++i){
-            if (i == result_offset){
-                continue;
-            }
+        if (instruction.opcode == spv::Op::OpExtInstImport) {
+            std::cout << std::string((char*)(&instruction.words[2]), instruction.word_count - 2);
+        } else {
+            for (uint32_t i = 1; i < instruction.word_count; ++i){
+                if (i == result_offset){
+                    continue;
+                }
 
-            if (instruction.opcode == spv::Op::OpDecorate){
-                if (i == 2) {
-                    std::cout << spv::DecorationToString((spv::Decoration)instruction.words[i]) << " ";
+                if (instruction.opcode == spv::Op::OpDecorate){
+                    if (i == 2) {
+                        std::cout << spv::DecorationToString((spv::Decoration)instruction.words[i]) << " ";
+                    } else {
+                        std::cout << instruction.words[i] << " ";
+                    }
+                }else if(instruction.opcode == spv::Op::OpMemberDecorate){
+                    if (i == 3) {
+                        std::cout << spv::DecorationToString((spv::Decoration)instruction.words[i]) << " ";
+                    } else {
+                        std::cout << instruction.words[i] << " ";
+                    }
                 } else {
                     std::cout << instruction.words[i] << " ";
                 }
-            }else if(instruction.opcode == spv::Op::OpMemberDecorate){
-                if (i == 3) {
-                    std::cout << spv::DecorationToString((spv::Decoration)instruction.words[i]) << " ";
-                } else {
-                    std::cout << instruction.words[i] << " ";
-                }
-            } else {
-                std::cout << instruction.words[i] << " ";
             }
         }
 
@@ -949,7 +949,7 @@ void SPIRVSimulator::Op_Load(const Instruction& instruction){
     If present, any Memory Operands must begin with a memory operand literal.
     If not present, it is the same as specifying the memory operand None.
     */
-    uint32_t type_id = instruction.words[1];
+    //uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t pointer_id = instruction.words[3];
 
@@ -1006,7 +1006,7 @@ void SPIRVSimulator::Op_AccessChain(const Instruction& instruction){
     uint32_t base_id = instruction.words[3];
 
     const Value& base_value = GetValue(base_id);
-    Type base_type = GetType(base_id);
+    //Type base_type = GetType(base_id);
 
     if (!std::holds_alternative<PointerV>(base_value)){
         throw std::runtime_error("SPIRV simulator: Attempt to use OpAccessChain on a non-pointer value");
@@ -1229,7 +1229,7 @@ void SPIRVSimulator::Op_ExtInst(const Instruction& instruction){
     uint32_t instruction_literal = instruction.words[4];
 
     if (extended_imports_.find(set_id) == extended_imports_.end()){
-
+        throw std::runtime_error("SPIRV simulator: Unsupported set ID (it has not been imported9) for Op_ExtInst: " + std::to_string(set_id));
     }
 
     std::string set_literal = extended_imports_[set_id];
@@ -2288,7 +2288,7 @@ void SPIRVSimulator::Op_CompositeExtract(const Instruction& instruction){
     All indexes must be in bounds. All composite constituents use zero-based numbering, as described by their OpType…​ instruction.
     Each index is an unsigned 32-bit integer.
     */
-    uint32_t type_id = instruction.words[1];
+    //uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t composite_id = instruction.words[3];
 
