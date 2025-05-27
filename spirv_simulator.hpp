@@ -35,6 +35,19 @@
 #include "spirv.hpp"
 #endif
 
+// ---------------------------------------------------------------------------
+//  Input structure
+//  This structure defines the shader inputs.
+//  This must be populated and passed to the run(...) method to
+//  populate the shader input values before and during execution.
+
+struct InputData{
+    // SpecId -> value
+    std::unordered_map<uint32_t, std::vector<std::byte>> specialization_constants;
+};
+
+// ---------------------------------------------------------------------------
+
 struct DecorationInfo{
     spv::Decoration kind;
     std::vector<uint32_t> literals;
@@ -134,11 +147,12 @@ void DecodeInstruction(std::span<const uint32_t>& program_words, Instruction& in
 
 class SPIRVSimulator{
 public:
-    explicit SPIRVSimulator(std::vector<uint32_t> program_words, bool verbose=false);
+    explicit SPIRVSimulator(const std::vector<uint32_t>& program_words, const InputData& input_data, bool verbose=false);
     void Run();
 private:
     // Parsing artefacts
     bool verbose_;
+    InputData input_data_;
     std::vector<uint32_t> program_words_;
     std::unordered_map<uint32_t, std::vector<uint32_t>> spec_instr_words_;
     std::span<const uint32_t> stream_;
@@ -199,6 +213,7 @@ private:
     void RegisterOpcodeHandlers();
     void Validate();
     void ExecuteInstruction(const Instruction&);
+    void PrintValueString(const Value&);
     void PrintInstruction(const Instruction&);
     void HandleUnimplementedOpcode(const Instruction&);
     Value MakeScalar(uint32_t type_id, const std::span<const uint32_t>& words);

@@ -16,8 +16,9 @@ void DecodeInstruction(std::span<const uint32_t>& program_words, Instruction& in
     program_words = program_words.subspan(instruction.word_count);
 }
 
-SPIRVSimulator::SPIRVSimulator(std::vector<uint32_t> program_words, bool verbose): verbose_(verbose), program_words_(std::move(program_words)){
+SPIRVSimulator::SPIRVSimulator(const std::vector<uint32_t>& program_words, const InputData& input_data, bool verbose): verbose_(verbose), program_words_(std::move(program_words)){
     stream_ = program_words_;
+    input_data_ = input_data;
     DecodeHeader();
     RegisterOpcodeHandlers();
     ParseAll();
@@ -286,6 +287,33 @@ void SPIRVSimulator::HandleUnimplementedOpcode(const Instruction& instruction){
     unimplemented_instructions_.push_back(instruction);
 }
 
+void SPIRVSimulator::PrintValueString(const Value& value){
+    if (std::holds_alternative<double>(value)){
+        std::cout << "double" << std::endl;
+    }
+    if (std::holds_alternative<uint64_t>(value)){
+        std::cout << "uint64_t" << std::endl;
+    }
+    if (std::holds_alternative<int64_t>(value)){
+        std::cout << "int64_t" << std::endl;
+    }
+    if (std::holds_alternative<std::monostate>(value)){
+        std::cout << "std::monostate" << std::endl;
+    }
+    if (std::holds_alternative<std::shared_ptr<VectorV>>(value)){
+        std::cout << "std::shared_ptr<VectorV>" << std::endl;
+    }
+    if (std::holds_alternative<std::shared_ptr<MatrixV>>(value)){
+        std::cout << "std::shared_ptr<MatrixV>" << std::endl;
+    }
+    if (std::holds_alternative<std::shared_ptr<AggregateV>>(value)){
+        std::cout << "std::shared_ptr<AggregateV>" << std::endl;
+    }
+    if (std::holds_alternative<PointerV>(value)){
+        std::cout << "PointerV" << std::endl;
+    }
+}
+
 void SPIRVSimulator::PrintInstruction(const Instruction& instruction){
     bool has_result = false;
     bool has_type = false;
@@ -445,8 +473,30 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id){
 
             return structure;
         }
+        case Type::Kind::Pointer:{
+            /*
+            Getting here generally means a struct holding a pointer is being default costructed
+
+            For now we just throw, but the right way to handle it is to assume it is initializing a pointer to a struct
+            decorated with Block (eg. it is a memory interface block and must be handled with special sauce)
+
+            TODO: when initializing a pointer whose type is a block decorated value/struct, we should set its obj_id to 0
+            and add its type_id to the idx_path (for simpler acces to it) and later detect the 0 obj id case when dereferencing it.
+
+            We then need to fetch its value from the inputs by mapping the type_id to the external pointer using result_id_to_external_pointer_
+
+            Then we must use the mapping to read the data from the input block, which the user then should have passed in the InputData struct
+            */
+
+            throw std::runtime_error("SPIRV simulator: Unhandled block decorator, support for this is unfinished, fix this and add input handling to proceed!");
+
+            PointerV new_pointer{0, type.pointer.storage_class, {type_id}};
+            SetValue(0, new_pointer);
+
+            return new_pointer;
+        }
         default:{
-            return std::monostate{};
+            throw std::runtime_error("SPIRV simulator: Invalid input type to MakeDefault: " + std::to_string((uint32_t)type.kind));
         }
     }
 }
@@ -951,13 +1001,18 @@ void SPIRVSimulator::Op_AccessChain(const Instruction& instruction){
     - if indexing into a structure, must be an OpConstant whose value is in bounds for selecting a member
     - if indexing into a vector, array, or matrix, with the result type being a logical pointer type,
       causes undefined behavior if not in bounds.
-
-    SIMULATOR SPECIFIC: We dont support types with more than 64 bits at present.
     */
     uint32_t result_id = instruction.words[2];
     uint32_t base_id = instruction.words[3];
 
-    PointerV pointer = std::get<PointerV>(GetValue(base_id));
+    const Value& base_value = GetValue(base_id);
+    Type base_type = GetType(base_id);
+
+    if (!std::holds_alternative<PointerV>(base_value)){
+        throw std::runtime_error("SPIRV simulator: Attempt to use OpAccessChain on a non-pointer value");
+    }
+
+    PointerV pointer = std::get<PointerV>(base_value);
     for(auto i = 4; i < instruction.word_count; ++i){
         const Value& index_value = GetValue(instruction.words[i]);
 
@@ -1054,7 +1109,13 @@ void SPIRVSimulator::Op_BranchConditional(const Instruction& instruction){
     True Label must be an OpLabel in the current function.
     False Label must be an OpLabel in the current function.
     Starting with version 1.6, True Label and False Label must not be the same <id>.
-    Branch weights are unsigned 32-bit integer literals. There must be either no Branch Weights or exactly two branch weights. If present, the first is the weight for branching to True Label, and the second is the weight for branching to False Label. The implied probability that a branch is taken is its weight divided by the sum of the two Branch weights. At least one weight must be non-zero. A weight of zero does not imply a branch is dead or permit its removal; branch weights are only hints. The sum of the two weights must not overflow a 32-bit unsigned integer.
+    Branch weights are unsigned 32-bit integer literals.
+    There must be either no Branch Weights or exactly two branch weights.
+    If present, the first is the weight for branching to True Label, and the second is the
+    weight for branching to False Label. The implied probability that a branch is taken is
+    its weight divided by the sum of the two Branch weights. At least one weight must be non-zero.
+    A weight of zero does not imply a branch is dead or permit its removal; branch weights are only hints.
+    The sum of the two weights must not overflow a 32-bit unsigned integer.
 
     This instruction must be the last instruction in a block.
     */
@@ -1425,7 +1486,7 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
         auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
 
         if(!std::holds_alternative<std::shared_ptr<VectorV>>(operand)){
-            // TODO: Error
+            throw std::runtime_error("SPIRV simulator: Invalid valye type for Op_LogicalNot, must be vector when using vector type");
         }
 
         auto vec = std::get<std::shared_ptr<VectorV>>(operand);
@@ -1477,7 +1538,7 @@ void SPIRVSimulator::Op_MemoryModel(const Instruction&) {
 }
 
 void SPIRVSimulator::Op_ExecutionMode(const Instruction&) {
-    // We may will need this later
+    // We may need this later
 }
 
 void SPIRVSimulator::Op_Source(const Instruction&) {
@@ -1520,6 +1581,8 @@ void SPIRVSimulator::Op_Decorate(const Instruction& instruction) {
 
     DecorationInfo info{kind, std::move(literals)};
     decorators_[target_id].emplace_back(std::move(info));
+
+    // TODO: If block decorator, set: result_id_to_external_pointer_[target_id] = <input_data_buffer>;
 }
 
 void SPIRVSimulator::Op_MemberDecorate(const Instruction& instruction) {
@@ -2441,7 +2504,8 @@ void SPIRVSimulator::Op_Bitcast(const Instruction& instruction){
 
         void* pointer_value;
         std::memcpy(&pointer_value, bytes.data(), sizeof(void*));
-        result_id_to_external_pointer_[result_id] = pointer_value;
+
+        // TODO: Store the pointer value somewhere (this is a pbuffer pointer, we want to track them)
 
         if (verbose_){
             std::cout << "SPIRV simulator: Found pointer with address: 0x" << std::hex  << pointer_value << std::dec << std::endl;

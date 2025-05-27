@@ -27,7 +27,8 @@ int main(int argc, char** argv){
         return 1;
     }
 
-    SPIRVSimulator em(ReadFile(argv[1]), true);
+    InputData inputs;
+    SPIRVSimulator em(ReadFile(argv[1]), inputs, true);
     em.Run();
 
     return 0;
