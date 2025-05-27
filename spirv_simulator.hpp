@@ -3,14 +3,6 @@
 #ifndef ARM_SPIRV_SIMULATOR_HPP
 #define ARM_SPIRV_SIMULATOR_HPP
 
-
-// ============================================================================
-//  Limitations (for clarity)
-//    * Bounds are *not* checked.
-//    * No support for scalars with more than 64 bits
-//    * No byte‑addressed aliasing – each element is a distinct `Value`.
-// ============================================================================
-
 #include <algorithm>
 #include <array>
 #include <cassert>
@@ -52,8 +44,6 @@ struct Instruction{
     uint16_t word_count;
     std::span<const uint32_t> words;
 };
-
-
 
 struct Type{
     enum class Kind{
@@ -120,6 +110,21 @@ struct PointerV {
     std::vector<uint32_t> idx_path;
 };
 
+template<class T>
+void extract_bytes(std::vector<std::byte>& output, T input, size_t num_bits){
+    if (sizeof(input) != 8){
+        // TODO: Error
+    }
+    std::array<std::byte, sizeof(T)> arr;
+
+    std::memcpy(arr.data(), &input, sizeof(T));
+    if (num_bits > 32){
+        output.insert(output.end(), arr.begin(), arr.end());
+    } else {
+        output.insert(output.end(), arr.begin(), arr.begin() + 4);
+    }
+}
+
 void DecodeInstruction(std::span<const uint32_t>& program_words, Instruction& instruction);
 
 class SPIRVSimulator{
@@ -140,6 +145,7 @@ private:
     std::vector<uint32_t> entry_points_;
     std::vector<Instruction> unimplemented_instructions_;
     std::unordered_map<uint32_t, uint32_t> forward_type_declarations_;
+    std::unordered_map<uint32_t, void*> result_id_to_external_pointer_;
 
     struct FunctionInfo{
         size_t inst_index;
@@ -193,6 +199,7 @@ private:
     Value& Deref(const PointerV &ptr);
     Value& GetValue(uint32_t result_id);
     void SetValue(uint32_t result_id, const Value& value);
+    Type GetType(uint32_t result_id) const;
 
     std::unordered_map<uint32_t,Value>& Heap(uint32_t sc){ return heaps_[sc]; }
 

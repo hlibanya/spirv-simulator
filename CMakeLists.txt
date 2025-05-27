@@ -12,6 +12,6 @@ set(SOURCE_FILES main.cpp spirv_simulator.cpp)
 
 set(HEADER_FILES spirv_simulator.hpp spirv.hpp)
 
-add_compile_options(-Wall -Wextra -Wpedantic)
+add_compile_options(-Wall -Wextra -Wpedantic -std=c++20)
 
 add_executable(spirv_simulator ${SOURCE_FILES} ${HEADER_FILES})

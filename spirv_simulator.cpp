@@ -129,6 +129,15 @@ void SPIRVSimulator::Validate(){
         if(t.kind == Type::Kind::Pointer && !types_.contains(t.pointer.pointee_type_id)){
             throw std::runtime_error("SPIRV simulator: Missing pointee type");
         }
+        if(t.kind == Type::Kind::Bool || t.kind == Type::Kind::Int || t.kind == Type::Kind::Float){
+            if (t.scalar.width != 32 && t.scalar.width != 64){
+                throw std::runtime_error("SPIRV simulator: We only allow 32 and 64 bit scalars at present");
+            }
+        }
+    }
+
+    if (sizeof(void*) != 8){
+        throw std::runtime_error("SPIRV simulator: Systems with non 64 bit pointers are not supported");
     }
 }
 
@@ -395,7 +404,15 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id){
             return matrix;
         }
         case Type::Kind::Array:{
-            uint64_t len = std::get<uint64_t>(GetValue(type.array.length_id));
+            uint64_t len;
+            if (type.array.length_id == 0){
+                // This is a OpTypeRuntimeArray
+                // Length is either set by OpArrayLength or it is unknown
+                len = 1;
+            } else {
+                len = std::get<uint64_t>(GetValue(type.array.length_id));
+            }
+
             auto aggregate = std::make_shared<AggregateV>();
             aggregate->elems.reserve(len);
             for(uint32_t i = 0; i < len; ++i){
@@ -427,32 +444,32 @@ Value& SPIRVSimulator::Deref(const PointerV &ptr){
 
     Value* value = &heap.at(ptr.obj_id);
     for(size_t depth = 0; depth < ptr.idx_path.size(); ++depth){
-        uint32_t i = ptr.idx_path[depth];
+        uint32_t indirection_index = ptr.idx_path[depth];
 
         if(std::holds_alternative<std::shared_ptr<AggregateV>>(*value)){
             auto agg = std::get<std::shared_ptr<AggregateV>>(*value);
 
-            if(i >= agg->elems.size()){
+            if(indirection_index >= agg->elems.size()){
                 throw std::runtime_error("SPIRV simulator: Aggregate index OOB");
             }
 
-            value = &agg->elems[i];
+            value = &agg->elems[indirection_index];
         } else if (std::holds_alternative<std::shared_ptr<VectorV>>(*value)){
             auto vec = std::get<std::shared_ptr<VectorV>>(*value);
 
-            if(i >= vec->elems.size()){
+            if(indirection_index >= vec->elems.size()){
                 throw std::runtime_error("SPIRV simulator: Vector index OOB");
             }
 
-            value = &vec->elems[i];
+            value = &vec->elems[indirection_index];
         } else if (std::holds_alternative<std::shared_ptr<MatrixV>>(*value)){
             auto matrix = std::get<std::shared_ptr<MatrixV>>(*value);
 
-            if(i >= matrix->cols.size()){
+            if(indirection_index >= matrix->cols.size()){
                 throw std::runtime_error("SPIRV simulator: Matrix index OOB");
             }
 
-            value = &matrix->cols[i];
+            value = &matrix->cols[indirection_index];
         }
         else{
             throw std::runtime_error("SPIRV simulator: Pointer dereference into non-composite object");
@@ -1482,12 +1499,23 @@ void SPIRVSimulator::Op_MemberDecorate(const Instruction&) {
 }
 
 void SPIRVSimulator::Op_ArrayLength(const Instruction& instruction){
+    /*
+    OpArrayLength
+
+    Length of a run-time array.
+    Result Type must be an OpTypeInt with 32-bit Width and 0 Signedness.
+
+    Structure must be a logical pointer to an OpTypeStruct whose last member is a run-time array.
+    Array member is an unsigned 32-bit integer index of the last member of the structure that Structure points to.
+    That member’s type must be from OpTypeRuntimeArray.
+    */
     //uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     //uint32_t structure_id = instruction.words[3];
-    //uint32_t array_member = instruction.words[4];
+    //uint32_t literal_array_member = instruction.words[4];
 
     // TODO: Must query metadata here to find the length
+    throw std::runtime_error("SPIRV simulator: Op_ArrayLength is unimplemented! Fix this.");
 
     SetValue(result_id, 0);
 }
@@ -2192,6 +2220,35 @@ void SPIRVSimulator::Op_CompositeExtract(const Instruction& instruction){
     SetValue(result_id, *current_composite);
 }
 
+Type SPIRVSimulator::GetType(uint32_t result_id) const{
+    if (result_id_to_inst_index_.find(result_id) == result_id_to_inst_index_.end()){
+        throw std::runtime_error("SPIRV simulator: No instruction found for result_id");
+    }
+
+    size_t instruction_index = result_id_to_inst_index_.at(result_id);
+    const Instruction& instruction = instructions_[instruction_index];
+
+    bool has_result = false;
+    bool has_type = false;
+    spv::HasResultAndType(instruction.opcode, &has_result, &has_type);
+
+    if (has_type){
+        uint32_t inst_type_id = instruction.words[1];
+        if (types_.find(inst_type_id) == types_.end()){
+            throw std::runtime_error("SPIRV simulator: No type found for type_id: " + std::to_string(inst_type_id));
+        }
+        return types_.at(inst_type_id);
+    } else {
+        Type void_type;
+        void_type.kind = Type::Kind::Void;
+        void_type.scalar = {
+            0,
+            false
+        };
+        return void_type;
+    }
+}
+
 void SPIRVSimulator::Op_Bitcast(const Instruction& instruction){
     /*
     OpBitcast
@@ -2224,18 +2281,131 @@ void SPIRVSimulator::Op_Bitcast(const Instruction& instruction){
     uint32_t result_id = instruction.words[2];
     uint32_t operand_id = instruction.words[3];
 
+    const Value& operand = GetValue(operand_id);
+    Type operand_type = GetType(operand_id);
+
     const Type& type = types_.at(type_id);
 
+    //
     // First, we extract all the data from the operands into a vector
+    //
+    std::vector<std::byte> bytes;
+    if (std::holds_alternative<std::shared_ptr<VectorV>>(operand)){
+        const Type& elem_type = types_.at(operand_type.vector.elem_type_id);
+        std::shared_ptr<VectorV> vec = std::get<std::shared_ptr<VectorV>>(operand);
+        for (const Value& element : vec->elems){
+            if (std::holds_alternative<double>(element)){
+                double value = std::get<double>(element);
+                extract_bytes<double>(bytes, value, elem_type.scalar.width);
+            } else if (std::holds_alternative<uint64_t>(element)){
+                uint64_t value = std::get<uint64_t>(element);
+                extract_bytes<uint64_t>(bytes, value, elem_type.scalar.width);
+            } else if (std::holds_alternative<int64_t>(element)){
+                int64_t value = std::get<int64_t>(element);
+                extract_bytes<int64_t>(bytes, value, elem_type.scalar.width);
+            } else {
+                throw std::runtime_error("SPIRV simulator: invalid operand element type in Op_Bitcast, must be numeric");
+            }
+        }
+    } else if (std::holds_alternative<double>(operand)){
+        double value = std::get<double>(operand);
+        extract_bytes<double>(bytes, value, operand_type.scalar.width);
+    } else if (std::holds_alternative<uint64_t>(operand)){
+        uint64_t value = std::get<uint64_t>(operand);
+        extract_bytes<uint64_t>(bytes, value, operand_type.scalar.width);
+    } else if (std::holds_alternative<int64_t>(operand)){
+        int64_t value = std::get<int64_t>(operand);
+        extract_bytes<int64_t>(bytes, value, operand_type.scalar.width);
+    } else if (std::holds_alternative<PointerV>(operand)){
+        // Take the easy out if its just pointer to pointer conversion
+        if (type.kind == Type::Kind::Pointer){
+            SetValue(result_id, operand);
+            return;
+        }
+        // We currently dont handle this, we could do it by storing the pointer in a
+        // special container and storing a index into that container in the result here
+        throw std::runtime_error("SPIRV simulator: Pointer to non-pointer Op_Bitcast detected, must add support for this!");
+    } else {
+        throw std::runtime_error("SPIRV simulator: invalid operand type in Op_Bitcast, must be vector or numeric");
+    }
 
-    // Ten we map this memory to the result value
-
+    //
+    // Then we map this memory to the result value
+    //
+    Value result;
     if (type.kind == Type::Kind::Vector){
+        const Type& elem_type = types_.at(type.vector.elem_type_id);
+        uint32_t elem_size_bytes = elem_type.scalar.width / 8;
+        std::shared_ptr<VectorV> vec = std::get<std::shared_ptr<VectorV>>(result);
+        uint32_t current_byte = 0;
 
-    } else if (type.kind == Type::Kind::Int){
-    } else if (type.kind == Type::Kind::Float){}
+        for (Value& element : vec->elems){
+            if (std::holds_alternative<double>(element)){
+                double value;
+                std::memcpy(&value, &(bytes[current_byte]), elem_size_bytes);
+                element = value;
+            } else if (std::holds_alternative<uint64_t>(element)){
+                uint64_t value;
+                std::memcpy(&value, &(bytes[current_byte]), elem_size_bytes);
+                element = value;
+            } else if (std::holds_alternative<int64_t>(element)){
+                int64_t value;
+                std::memcpy(&value, &(bytes[current_byte]), elem_size_bytes);
+                element = value;
+            } else {
+                throw std::runtime_error("SPIRV simulator: invalid result element type in Op_Bitcast, must be numeric");
+            }
 
-    std::cout << "BITCAST UNFINISHED; THIS WILL LIKELY CRASH!" << std::endl;
+            current_byte += elem_size_bytes;
+        }
+    } else if (type.kind == Type::Kind::Float){
+        double value;
+        std::memcpy(&value, bytes.data(), type.scalar.width / 8);
+        result = value;
+    } else if ((type.kind == Type::Kind::Int) && !type.scalar.is_signed){
+        uint64_t value;
+        std::memcpy(&value, bytes.data(), type.scalar.width / 8);
+        result = value;
+    } else if ((type.kind == Type::Kind::Int) && type.scalar.is_signed){
+        int64_t value;
+        std::memcpy(&value, bytes.data(), type.scalar.width / 8);
+        result = value;
+    } else if (type.kind == Type::Kind::Pointer) {
+        // This is one of the main cases we want to detect, a non-pointer type is cast to a pointer
+        // Create a new pointer to the base type, and add a mapping to the real memory (referenced by the true value held by the operands)
+        // If the real memory is provided, read and initialize the target value on our simulated heap
+
+        Value pointee_init = MakeDefault(type.pointer.pointee_type_id);
+
+        // TODO: Set value of pointee_init if the source pointer is available
+
+        if(type.pointer.storage_class == (uint32_t)spv::StorageClass::StorageClassFunction){
+            call_stack_.back().func_heap[result_id] = pointee_init;
+        }
+        else{
+            Heap(type.pointer.storage_class)[result_id] = pointee_init;
+        }
+
+
+        // TODO: Deal with pointers into compound types here (set the indirection path etc.)
+
+        PointerV new_pointer{result_id, type.pointer.storage_class, {}};
+        SetValue(result_id, new_pointer);
+
+        void* pointer_value;
+        std::memcpy(&pointer_value, bytes.data(), sizeof(void*));
+        result_id_to_external_pointer_[result_id] = pointer_value;
+
+        if (verbose_){
+            std::cout << "SPIRV simulator: Found pointer with address: 0x" << std::hex  << pointer_value << std::dec << std::endl;
+        }
+
+        return;
+    } else {
+        throw std::runtime_error("SPIRV simulator: invalid result type in Op_Bitcast, must be vector, pointer or numeric, was: " + std::to_string((uint32_t)type.kind));
+    }
+
+    SetValue(result_id, result);
 }
 
 void SPIRVSimulator::Op_IMul(const Instruction& instruction){
