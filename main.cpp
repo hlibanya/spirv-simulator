@@ -31,8 +31,9 @@ int main(int argc, char** argv){
     SPIRVSimulator em(ReadFile(argv[1]), inputs, true);
     em.Run();
 
-    const PhysicalAddressData& physical_address_data = em.GetPhysicalAddressData();
+    auto physical_address_data = em.GetPhysicalAddressData();
 
+    /*
     std::cout << "Found physical addresses:" << std::endl;
     for (auto pointer : physical_address_data.physical_address_buffer_pointers){
         std::cout << std::right << std::setw(15) << "Raw address: " << pointer.raw_pointer << std::endl;
@@ -48,7 +49,7 @@ int main(int argc, char** argv){
             std::cout << std::setw(25) << "Object offset: " << offset << std::endl;
         }
     }
-
+    */
 
     return 0;
 }
