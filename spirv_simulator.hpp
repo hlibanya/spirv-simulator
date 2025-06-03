@@ -43,16 +43,20 @@
 //  populate the shader input values before and during execution.
 
 struct InputData{
-    // SpecId -> value
+    // SpecId -> data
     std::unordered_map<uint32_t, std::vector<std::byte>> specialization_constants;
+
     // The full binary push_constant block
     std::vector<std::byte> push_constants;
+
+    // DescriptorSet -> Binding -> data
+    std::unordered_map<uint64_t, std::unordered_map<uint64_t, std::vector<std::byte>>> bindings;
+
     // These are optional and can be provided by the user in order to properly initialize
     // PhysicalStorageBuffer values.
     // The keys here are uint64_t values who contain the bits in the physical address pointers
+    // The vector holds the actual data
     std::unordered_map<uint64_t, std::vector<std::byte>> physical_address_buffers;
-
-    // TODO: Uniform buffers, SSBO's etc.
 };
 
 // ---------------------------------------------------------------------------

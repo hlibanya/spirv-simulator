@@ -1340,7 +1340,39 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
     if (type.pointer.storage_class == spv::StorageClass::StorageClassPushConstant){
         const std::byte* external_pointer = input_data_.push_constants.data();
         if (!input_data_.push_constants.size()){
-            //throw std::runtime_error("SPIRV simulator: No push constant data mapped, this will crash. Provide valid inputs");
+            std::cout << execIndent << "SPIRV simulator: No push constant initialization data mapped in the inputs, setting to defaults, this may crash" << std::endl;
+            Value init = MakeDefault(type.pointer.pointee_type_id);
+            Heap(storage_class)[result_id] = init;
+        } else {
+            std::vector<uint32_t> buffer_data;
+            ExtractWords(external_pointer, type.pointer.pointee_type_id, buffer_data);
+
+            const uint32_t* buffer_pointer = buffer_data.data();
+            Value init = MakeDefault(type.pointer.pointee_type_id, &buffer_pointer);
+            Heap(storage_class)[result_id] = init;
+        }
+    } else if (type.pointer.storage_class == spv::StorageClass::StorageClassUniform || type.pointer.storage_class == spv::StorageClass::StorageClassUniformConstant || type.pointer.storage_class == spv::StorageClass::StorageClassStorageBuffer){
+        if (!HasDecorator(result_id, spv::Decoration::DecorationDescriptorSet)){
+            throw std::runtime_error("SPIRV simulator: OpVariable called with result_id that lacks the DescriptorSet decoration, but the storage class requires it");
+        }
+
+        if (!HasDecorator(result_id, spv::Decoration::DecorationBinding)){
+            throw std::runtime_error("SPIRV simulator: OpVariable called with result_id that lacks the Binding decoration, but the storage class requires it");
+        }
+
+        uint32_t descriptor_set = GetDecoratorLiteral(result_id, spv::Decoration::DecorationDescriptorSet);
+        uint32_t binding = GetDecoratorLiteral(result_id, spv::Decoration::DecorationBinding);
+
+        const std::byte* external_pointer = nullptr;
+
+        if (input_data_.bindings.find(descriptor_set) != input_data_.bindings.end()){
+            if (input_data_.bindings.at(descriptor_set).find(binding) != input_data_.bindings.at(descriptor_set).end()){
+                external_pointer = input_data_.bindings.at(descriptor_set).at(binding).data();
+            }
+        }
+
+        if (!external_pointer){
+            std::cout << execIndent << "SPIRV simulator: No binding initialization data mapped in the inputs for descriptor set: " << descriptor_set << ", binding: " << binding << ", setting to defaults, this may crash" << std::endl;
             Value init = MakeDefault(type.pointer.pointee_type_id);
             Heap(storage_class)[result_id] = init;
         } else {
