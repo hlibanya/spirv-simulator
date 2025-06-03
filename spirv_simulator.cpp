@@ -329,9 +329,9 @@ void SPIRVSimulator::Run(){
     if (verbose_){
         std::cout << "Pointers to pbuffers:" << std::endl;
         for (const auto& pointer_t : physical_address_pointer_source_data_){
-            std::cout << "  Found pointer at address: " << pointer_t.raw_pointer_value << std::endl;
+            std::cout << "  Found pointer with address: " << pointer_t.raw_pointer_value << " made from input bit components:" << std::endl;
             for (auto bit_component : pointer_t.bit_components){
-                std::cout << "    " << "With DescriptorSetID: " << bit_component.set_id << ", Binding: " << bit_component.binding_id << ", Byte Offset: " << bit_component.byte_offset << ", Bitsize: " << bit_component.bitcount << ", Val Bit Offset: " << bit_component.val_bit_offset << std::endl;
+                std::cout << "    " << "From DescriptorSetID: " << bit_component.set_id << ", Binding: " << bit_component.binding_id << ", Byte Offset: " << bit_component.byte_offset << ", Bitsize: " << bit_component.bitcount << ", to val Bit Offset: " << bit_component.val_bit_offset << std::endl;
             }
         }
     }

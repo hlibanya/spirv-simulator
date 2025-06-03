@@ -4,8 +4,8 @@ G++ 10 or newer and Clang 10 or newer should do the trick.
 
 To build:
 
-cmake -H. -Bbuild
-cd build
+cmake -H. -Bbuild;
+cd build;
 make
 
 To run a test:
