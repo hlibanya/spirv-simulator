@@ -48,6 +48,10 @@
 //  that layout
 
 struct InputData{
+    // The SpirV ID of the entry point to use
+    // TODO: This might not be very user friendly, consider using name labels instead (should pretty much always work)
+    uint32_t entry_point_id = 0;
+
     // SpecId -> data
     std::unordered_map<uint32_t, std::vector<std::byte>> specialization_constants;
 
@@ -68,24 +72,42 @@ struct InputData{
 
 enum BitLocation{
     Constant,  // Constant embedded in the shader, offsets will be relative to the start of the spirv binary code
-    SpecializationConstant,  // Spec constant, binding will be SpecId
+    SpecConstant,  // Spec constant, binding will be SpecId
     StorageClass  // storage_class specifies what block type we are dealing with
 };
 
 struct DataSourceBits{
+    /*
+    Structure describing where a sequence of bits that ended up either being used to construct
+    (or that was eventually interpreted as) a pointer pointing to data with the PhysicalStorageBuffer storage class
+    */
+
+    // Specifies where the data comes from
     BitLocation location;
+    // If location is StorageClass, this holds the storage class
     spv::StorageClass storage_class;
-    uint64_t binding;
-    uint64_t member;
+    // If the location is StorageClass and the pointer is located in a array of Block's
+    // then this is the array index which holds the descriptor block containing the pointer
+    uint64_t idx;
+    // DescriptorSet ID when location is StorageClass. Unused otherwise
+    uint64_t set_id;
+    // Binding ID when location is StorageClass.
+    // SpecId when location is SpecConstant.
+    // Unused otherwise
+    uint64_t binding_id;
+    // Absolute byte offset into the containing buffer where the data is located
+    // If location is Constant, then this will be the byte offset into the spirv shader words input
     uint64_t byte_offset;
+    // The bit offset from the byte offset where the data was stored
     uint64_t bit_offset;
+    // Number of bits in the bit sequence
     uint64_t bitcount;
+    // Bit offset into the final pointer where this data ended up
     uint64_t val_bit_offset;
 };
 
 // We return a vector of these.
-// The src_bit_components contain data on where the bits that eventually become the pointer were read from.
-// The dst_bit_components show where any output bits of the pointer were written to.
+// The bit_components vector contain data on where the bits that eventually become the pointer were read from.
 struct PhysicalAddressData{
     std::vector<DataSourceBits> bit_components;
     uint64_t raw_pointer_value;
@@ -163,6 +185,7 @@ struct AggregateV{
 struct PointerV {
     // Always the index of the value that this pointer points to
     uint32_t obj_id;
+    uint32_t type_id;
     uint32_t storage_class;
 
     // Optional value, holds the raw pointer value when applicable
@@ -210,6 +233,7 @@ private:
 
     // Parsing artefacts
     InputData input_data_;
+    std::set<uint32_t> entry_points_;
     std::vector<uint32_t> program_words_;
     std::span<const uint32_t> stream_;
     std::vector<Instruction> instructions_;
@@ -219,7 +243,6 @@ private:
     std::unordered_map<uint32_t, Type> types_;
     //std::set<uint32_t> physical_storage_types_;
     std::unordered_map<uint32_t, std::vector<uint32_t>> struct_members_;
-    std::vector<uint32_t> entry_points_;
     std::unordered_map<uint32_t, uint32_t> forward_type_declarations_;
     std::unordered_map<uint32_t, std::vector<DecorationInfo>> decorators_;
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, std::vector<DecorationInfo>>> struct_decorators_;
@@ -232,7 +255,8 @@ private:
 
     // These hold any pointers that reference physical storage buffers
     std::vector<PointerV> physical_address_pointers_;
-    std::vector<PointerV> pointers_to_physical_address_pointers_;
+    std::vector<std::pair<PointerV, PointerV>> pointers_to_physical_address_pointers_;
+    std::vector<PhysicalAddressData> physical_address_pointer_source_data_;
 
     struct FunctionInfo{
         size_t inst_index;
@@ -292,9 +316,10 @@ private:
     Type GetType(uint32_t result_id) const;
     uint32_t GetTypeID(uint32_t result_id) const;
     void ExtractWords(const std::byte* external_pointer, uint32_t type_id, std::vector<uint32_t>& buffer_data);
+    uint64_t GetPointerOffset(const PointerV& pointer_value);
     size_t GetBitizeOfType(uint32_t type_id);
     void GetBaseTypeIDs(uint32_t type_id, std::vector<uint32_t>& output);
-    void FindDataSourcesFromResultID(uint32_t result_id);
+    std::vector<DataSourceBits> FindDataSourcesFromResultID(uint32_t result_id);
     bool HasDecorator(uint32_t result_id, spv::Decoration decorator);
     bool HasDecorator(uint32_t result_id, uint32_t member_id, spv::Decoration decorator);
     uint32_t GetDecoratorLiteral(uint32_t result_id, spv::Decoration decorator, size_t literal_offset=0);
