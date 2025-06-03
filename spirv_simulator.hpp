@@ -38,9 +38,14 @@
 
 // ---------------------------------------------------------------------------
 //  Input structure
+//
 //  This structure defines the shader inputs.
 //  This must be populated and passed to the run(...) method to
 //  populate the shader input values before and during execution.
+//
+//  The format of the data must be what the shader expects, eg. if a buffer is bound
+//  to a binding with the std430 layout, the data in the byte vectors must obey the rules of
+//  that layout
 
 struct InputData{
     // SpecId -> data
@@ -52,10 +57,9 @@ struct InputData{
     // DescriptorSet -> Binding -> data
     std::unordered_map<uint64_t, std::unordered_map<uint64_t, std::vector<std::byte>>> bindings;
 
-    // These are optional and can be provided by the user in order to properly initialize
-    // PhysicalStorageBuffer values.
+    // These can be provided by the user in order to properly initialize PhysicalStorageBuffer storage class values.
     // The keys here are uint64_t values who contain the bits in the physical address pointers
-    // The vector holds the actual data
+    // The vector holds the actual data in the buffer
     std::unordered_map<uint64_t, std::vector<std::byte>> physical_address_buffers;
 };
 
