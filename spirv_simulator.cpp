@@ -36,12 +36,19 @@ void SPIRVSimulator::DecodeHeader(){
     {
         std::cout << "SPIRV simulator: WARNING magic SPIRV header number wrong, should be: " << 0x07230203 << " but is " << magic_number << std::endl;
     }
-    /*
-    uint32_t version = program_words_[1];
-    uint32_t generator = program_words_[2];
-    uint32_t bound = program_words_[3];
-    uint32_t schema = program_words_[4];
-    */
+
+    if (verbose_){
+        uint32_t version = program_words_[1];
+        uint32_t generator = program_words_[2];
+        uint32_t bound = program_words_[3];
+        uint32_t schema = program_words_[4];
+
+        std::cout << "SPIRV simulator: Shader header parsed as:" << std::endl;
+        std::cout << execIndent << "Version: " << version << std::endl;
+        std::cout << execIndent << "Generator: " << generator << std::endl;
+        std::cout << execIndent << "Bound: " << bound << std::endl;
+        std::cout << execIndent << "Schema: " << schema << std::endl << std::endl;
+    }
 
     stream_ = std::span<const uint32_t>(program_words_).subspan(5);
 }
@@ -219,24 +226,25 @@ void SPIRVSimulator::ParseAll(){
 
     if (verbose_){
         std::cout << "SPIRV simulator: Parsing complete!\n" << std::endl;
-    }
 
-    if (unimplemented_instructions_.size() && verbose_){
-        // TODO: Deduplicate, probably better to use a map to track the ids
-        std::cout << "SPIRV simulator: The following instructions are unsupported:" << std::endl;
+        if (unimplemented_instructions_.size() && verbose_){
+            // TODO: Deduplicate, probably better to use a map to track the ids
+            std::cout << "SPIRV simulator: The following instructions are unsupported:" << std::endl;
 
-        for (auto instruction : unimplemented_instructions_){
-            
-            PrintInstruction(instruction);
+            for (auto instruction : unimplemented_instructions_){
+                PrintInstruction(instruction);
+            }
+
+            std::cout << std::endl;
         }
-
-        std::cout << std::endl;
     }
 }
 
 void SPIRVSimulator::Run(){
     if(funcs_.empty()){
-        std::cerr << "SPIRV simulator: No functions defined in the shader, cannot start execution" << std::endl;
+        if (verbose_){
+            std::cerr << "SPIRV simulator: No functions defined in the shader, cannot start execution" << std::endl;
+        }
         return;
     }
 
@@ -318,11 +326,13 @@ void SPIRVSimulator::Run(){
         physical_address_pointer_source_data_.push_back(output_result);
     }
 
-    std::cout << "Pointers to pbuffers:" << std::endl;
-    for (const auto& pointer_t : physical_address_pointer_source_data_){
-        std::cout << "  Found pointer at address: " << pointer_t.raw_pointer_value << std::endl;
-        for (auto bit_component : pointer_t.bit_components){
-            std::cout << "    " << "With DescriptorSetID: " << bit_component.set_id << ", Binding: " << bit_component.binding_id << ", Byte Offset: " << bit_component.byte_offset << ", Bitsize: " << bit_component.bitcount << ", Val Bit Offset: " << bit_component.val_bit_offset << std::endl;
+    if (verbose_){
+        std::cout << "Pointers to pbuffers:" << std::endl;
+        for (const auto& pointer_t : physical_address_pointer_source_data_){
+            std::cout << "  Found pointer at address: " << pointer_t.raw_pointer_value << std::endl;
+            for (auto bit_component : pointer_t.bit_components){
+                std::cout << "    " << "With DescriptorSetID: " << bit_component.set_id << ", Binding: " << bit_component.binding_id << ", Byte Offset: " << bit_component.byte_offset << ", Bitsize: " << bit_component.bitcount << ", Val Bit Offset: " << bit_component.val_bit_offset << std::endl;
+            }
         }
     }
 }
@@ -512,7 +522,6 @@ uint32_t SPIRVSimulator::GetDecoratorLiteral(uint32_t result_id, spv::Decoration
     This will crash if the target id does not have the given decorator
     Check with HasDecorator first
     */
-
     if (decorators_.find(result_id) != decorators_.end()){
         for (const auto& decorator_data : decorators_.at(result_id)){
             if (decorator_data.kind == decorator){
@@ -533,7 +542,6 @@ uint32_t SPIRVSimulator::GetDecoratorLiteral(uint32_t result_id, uint32_t member
     This will crash if the target id does not have the given decorator
     Check with HasDecorator first
     */
-
     if (struct_decorators_.find(result_id) != struct_decorators_.end()){
         if (struct_decorators_.at(result_id).find(member_id) != struct_decorators_.at(result_id).end()){
             for (const auto& decorator_data : struct_decorators_.at(result_id).at(member_id)){
@@ -684,6 +692,7 @@ void SPIRVSimulator::ExtractWords(const std::byte* external_pointer, uint32_t ty
 
         if (type.array.length_id == 0){
             // Runtime array, special handling, extract one element
+            // TODO: We should probably change this and use sparse loads with maps or something
             ExtractWords(external_pointer, type.array.elem_type_id, buffer_data);
         } else {
             uint64_t array_len = std::get<uint64_t>(GetValue(type.array.length_id));
@@ -924,7 +933,9 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id, const uint32_t** initial_dat
                 if (initial_data){
                     std::memcpy(&pointer_value, reinterpret_cast<const std::byte*>(initial_data), sizeof(uint64_t));
                 } else {
-                    std::cout << execIndent << "SPIRV simulator: A pointer with StorageClassPhysicalStorageBuffer was default initialized without input buffer data available. The actual pointer address will be unknown (null)" << std::endl;
+                    if (verbose_){
+                        std::cout << execIndent << "SPIRV simulator: A pointer with StorageClassPhysicalStorageBuffer was default initialized without input buffer data available. The actual pointer address will be unknown (null)" << std::endl;
+                    }
                 }
 
                 if (initial_data){
@@ -1047,7 +1058,10 @@ Value& SPIRVSimulator::Deref(const PointerV &ptr){
 
             if(indirection_index >= agg->elems.size()){
                 // We assume a runtime array here and just return the first entry
-                std::cout << execIndent << "SPIRV simulator: Array index OOB, assuming runtime array and returning first element" << std::endl;
+                // TODO: We should probably change this to use sparse access with maps or something
+                if (verbose_){
+                    std::cout << execIndent << "SPIRV simulator: Array index OOB, assuming runtime array and returning first element" << std::endl;
+                }
                 value = &agg->elems[0];
             } else {
                 value = &agg->elems[indirection_index];
@@ -1139,8 +1153,10 @@ void SPIRVSimulator::GLSLExtHandler(
             break;
         }
         default:{
-            std::cout << "SPIRV simulator: Unhandled OpExtInst GLSL set operation: " << instruction_literal << std::endl;
-            std::cout << "SPIRV simulator: Setting output to default value, this will likely crash" << std::endl;
+            if (verbose_){
+                std::cout << "SPIRV simulator: Unhandled OpExtInst GLSL set operation: " << instruction_literal << std::endl;
+                std::cout << "SPIRV simulator: Setting output to default value, this will likely crash" << std::endl;
+            }
             SetValue(result_id, MakeDefault(type_id));
         }
     }
@@ -1356,7 +1372,9 @@ void SPIRVSimulator::Op_Constant(const Instruction& instruction){
             const uint32_t* buffer_pointer = buffer_data.data();
             SetValue(result_id, MakeScalar(type_id, buffer_pointer));
         } else {
-            std::cout << execIndent << "SPIRV simulator: No spec constant data provided for result_id: " << result_id << ", using default" << std::endl;
+            if (verbose_){
+                std::cout << execIndent << "SPIRV simulator: No spec constant data provided for result_id: " << result_id << ", using default" << std::endl;
+            }
             const uint32_t* buffer_pointer = instruction.words.subspan(3).data();
             SetValue(result_id, MakeScalar(type_id, buffer_pointer));
         }
@@ -1486,7 +1504,9 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
     if (type.pointer.storage_class == spv::StorageClass::StorageClassPushConstant){
         const std::byte* external_pointer = input_data_.push_constants.data();
         if (!input_data_.push_constants.size()){
-            std::cout << execIndent << "SPIRV simulator: No push constant initialization data mapped in the inputs, setting to defaults, this may crash" << std::endl;
+            if (verbose_){
+                std::cout << execIndent << "SPIRV simulator: No push constant initialization data mapped in the inputs, setting to defaults, this may crash" << std::endl;
+            }
             Value init = MakeDefault(type.pointer.pointee_type_id);
             Heap(storage_class)[result_id] = init;
         } else {
@@ -1518,7 +1538,9 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
         }
 
         if (!external_pointer){
-            std::cout << execIndent << "SPIRV simulator: No binding initialization data mapped in the inputs for descriptor set: " << descriptor_set << ", binding: " << binding << ", setting to defaults, this may crash" << std::endl;
+            if (verbose_){
+                std::cout << execIndent << "SPIRV simulator: No binding initialization data mapped in the inputs for descriptor set: " << descriptor_set << ", binding: " << binding << ", setting to defaults, this may crash" << std::endl;
+            }
             Value init = MakeDefault(type.pointer.pointee_type_id);
             Heap(storage_class)[result_id] = init;
         } else {
@@ -1886,7 +1908,9 @@ void SPIRVSimulator::Op_ExtInst(const Instruction& instruction){
     if (!std::strncmp(set_literal.c_str(), "GLSL.std.450", set_literal.length())){
         GLSLExtHandler(type_id, result_id, instruction_literal, operand_words);
     } else {
-        std::cout << std::setw(5) << "SPIRV simulator: OpExtInst set with literal: " << set_literal << " (length: " << set_literal.length() << ") " << " does not exist" << std::endl;
+        if (verbose_){
+            std::cout << execIndent << "OpExtInst set with literal: " << set_literal << " (length: " << set_literal.length() << ") " << " does not exist" << std::endl;
+        }
         SetValue(result_id, MakeDefault(type_id));
     }
 }
