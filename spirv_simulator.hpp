@@ -36,6 +36,8 @@
 #include "spirv.hpp"
 #endif
 
+namespace SPIRVSimulator {
+
 // ---------------------------------------------------------------------------
 //  Input structure
 //
@@ -399,5 +401,7 @@ private:
     void Op_UMod(const Instruction&);
     void Op_ULessThan(const Instruction&);
 };
+
+}
 
 #endif

@@ -1,5 +1,7 @@
 #include "spirv_simulator.hpp"
 
+namespace SPIRVSimulator{
+
 constexpr uint32_t kWordCountShift = 16u;
 constexpr uint32_t kOpcodeMask = 0xFFFFu;
 const std::string execIndent = "                  # ";
@@ -3629,4 +3631,6 @@ void SPIRVSimulator::Op_ULessThan(const Instruction& instruction){
     } else {
         throw std::runtime_error("SPIRV simulator: Invalid result type int Op_ULessThan, must be vector or bool");
     }
+}
+
 }
