@@ -33,23 +33,26 @@ int main(int argc, char** argv){
 
     auto physical_address_data = em.GetPhysicalAddressData();
 
-    /*
-    std::cout << "Found physical addresses:" << std::endl;
-    for (auto pointer : physical_address_data.physical_address_buffer_pointers){
-        std::cout << std::right << std::setw(15) << "Raw address: " << pointer.raw_pointer << std::endl;
-        for (auto offset : pointer.idx_path){
-            std::cout << std::setw(25) << "Object offset: " << offset << std::endl;
-        }
-    }
+    std::cout << "Pointers to pbuffers:" << std::endl;
+    for (const auto& pointer_t : physical_address_data){
+        std::cout << "  Found pointer with address: 0x" << std::hex << pointer_t.raw_pointer_value << std::dec << " made from input bit components:" << std::endl;
+        for (auto bit_component : pointer_t.bit_components){
+            if (bit_component.location == BitLocation::Constant) {
+                std::cout << "    " << "From Constant in SPIRV input words, at Byte Offset: " << bit_component.byte_offset << std::endl;
+            } else {
+                if (bit_component.location == BitLocation::SpecConstant){
+                    std::cout << "    " << "From SpecId: " << bit_component.binding_id;
+                } else {
+                    std::cout << "    " << "From DescriptorSetID: " << bit_component.set_id << ", Binding: " << bit_component.binding_id;
+                }
 
-    std::cout << "Found pointers to physical address pointers:" << std::endl;
-    for (auto pointer : physical_address_data.pointers_to_physical_address_buffer_pointers){
-        std::cout << std::right << std::setw(15) << "Raw address: " << pointer.raw_pointer << std::endl;
-        for (auto offset : pointer.idx_path){
-            std::cout << std::setw(25) << "Object offset: " << offset << std::endl;
+                if (bit_component.location == BitLocation::StorageClass){
+                    std::cout << ", in StorageClass: " << spv::StorageClassToString(bit_component.storage_class);
+                }
+                std::cout << ", Byte Offset: " << bit_component.byte_offset << ", Bitsize: " << bit_component.bitcount << ", to val Bit Offset: " << bit_component.val_bit_offset << std::endl;
+            }
         }
     }
-    */
 
     return 0;
 }

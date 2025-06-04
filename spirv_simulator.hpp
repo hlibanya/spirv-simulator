@@ -225,7 +225,7 @@ public:
     explicit SPIRVSimulator(const std::vector<uint32_t>& program_words, const InputData& input_data, bool verbose=false);
     void Run();
 
-    std::vector<PhysicalAddressData> GetPhysicalAddressData() const {return {};}
+    const std::vector<PhysicalAddressData>& GetPhysicalAddressData() const {return physical_address_pointer_source_data_;}
 
 private:
     // Used to create object id's for entries not created by a spirv instruction
@@ -241,23 +241,27 @@ private:
     std::unordered_map<uint32_t, Instruction> spec_instructions_;
     std::unordered_map<uint32_t, size_t> result_id_to_inst_index_;
     std::unordered_map<uint32_t, Type> types_;
-    //std::set<uint32_t> physical_storage_types_;
     std::unordered_map<uint32_t, std::vector<uint32_t>> struct_members_;
-    std::unordered_map<uint32_t, uint32_t> forward_type_declarations_;
+    std::unordered_map<uint32_t, uint32_t> forward_type_declarations_;  // Unused, consider removing this
     std::unordered_map<uint32_t, std::vector<DecorationInfo>> decorators_;
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, std::vector<DecorationInfo>>> struct_decorators_;
-    std::set<uint32_t> arbitrary_values_;  // Any result ID in this set, can be treated as if it has any valid value for the given type
-    std::unordered_map<uint32_t, DataSourceBits> data_source_bits_;
+    std::unordered_map<uint32_t, std::string> extended_imports_;
+    // Any result ID in this set, can be treated as if it has any valid value for the given type
+    std::set<uint32_t> arbitrary_values_;
+    // This maps the result ID of pointers to the result ID of values stored through them
+    std::unordered_map<uint32_t, uint32_t> values_stored_;
 
     // Debug only
     bool verbose_;
     std::vector<Instruction> unimplemented_instructions_;
 
-    // These hold any pointers that reference physical storage buffers
+    // These hold information about any pointers that reference physical storage buffers
     std::vector<PointerV> physical_address_pointers_;
     std::vector<std::pair<PointerV, PointerV>> pointers_to_physical_address_pointers_;
     std::vector<PhysicalAddressData> physical_address_pointer_source_data_;
+    std::unordered_map<uint32_t, DataSourceBits> data_source_bits_;
 
+    // Control flow
     struct FunctionInfo{
         size_t inst_index;
         size_t first_inst_index;
@@ -267,9 +271,6 @@ private:
     uint32_t prev_defined_func_id_;
     std::unordered_map<uint32_t, FunctionInfo> funcs_;
 
-    std::unordered_map<uint32_t, std::string> extended_imports_;
-
-    // Control flow
     uint32_t prev_block_id_ = 0;
     uint32_t current_block_id_ = 0;
 
@@ -318,6 +319,7 @@ private:
     void ExtractWords(const std::byte* external_pointer, uint32_t type_id, std::vector<uint32_t>& buffer_data);
     uint64_t GetPointerOffset(const PointerV& pointer_value);
     size_t GetBitizeOfType(uint32_t type_id);
+    size_t GetBitizeOfTargetType(const PointerV& pointer);
     void GetBaseTypeIDs(uint32_t type_id, std::vector<uint32_t>& output);
     std::vector<DataSourceBits> FindDataSourcesFromResultID(uint32_t result_id);
     bool HasDecorator(uint32_t result_id, spv::Decoration decorator);
@@ -326,7 +328,6 @@ private:
     uint32_t GetDecoratorLiteral(uint32_t result_id, uint32_t member_id, spv::Decoration decorator, size_t literal_offset=0);
     uint32_t GetNextExternalID(){uint32_t new_id = next_external_id_; next_external_id_ += 1; return new_id;}
     bool ValueIsArbitrary(uint32_t result_id) const {return arbitrary_values_.contains(result_id);};
-
     std::unordered_map<uint32_t,Value>& Heap(uint32_t sc){ return heaps_[sc]; }
 
     // Opcode handlers
@@ -394,6 +395,9 @@ private:
     void Op_Bitcast(const Instruction&);
     void Op_IMul(const Instruction&);
     void Op_ConvertUToPtr(const Instruction&);
+    void Op_UDiv(const Instruction&);
+    void Op_UMod(const Instruction&);
+    void Op_ULessThan(const Instruction&);
 };
 
 #endif

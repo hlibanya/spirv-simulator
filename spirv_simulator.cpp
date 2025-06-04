@@ -123,7 +123,9 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpBitcast,                [this](const Instruction& i){Op_Bitcast(i);});
     R(spv::Op::OpIMul,                   [this](const Instruction& i){Op_IMul(i);});
     R(spv::Op::OpConvertUToPtr,          [this](const Instruction& i){Op_ConvertUToPtr(i);});
-
+    R(spv::Op::OpUDiv,                   [this](const Instruction& i){Op_UDiv(i);});
+    R(spv::Op::OpUMod,                   [this](const Instruction& i){Op_UMod(i);});
+    R(spv::Op::OpULessThan,              [this](const Instruction& i){Op_ULessThan(i);});
 }
 
 void SPIRVSimulator::Validate(){
@@ -289,6 +291,7 @@ void SPIRVSimulator::Run(){
         DataSourceBits source_data;
         source_data.location = BitLocation::StorageClass;
         source_data.storage_class = (spv::StorageClass)phys_ppointer.storage_class;
+        source_data.idx = 0;
         source_data.bit_offset = 0;
         source_data.bitcount = 64;
         source_data.val_bit_offset = 0;
@@ -324,16 +327,6 @@ void SPIRVSimulator::Run(){
         output_result.raw_pointer_value = phys_pointer.raw_pointer;
         output_result.bit_components.push_back(source_data);
         physical_address_pointer_source_data_.push_back(output_result);
-    }
-
-    if (verbose_){
-        std::cout << "Pointers to pbuffers:" << std::endl;
-        for (const auto& pointer_t : physical_address_pointer_source_data_){
-            std::cout << "  Found pointer with address: " << pointer_t.raw_pointer_value << " made from input bit components:" << std::endl;
-            for (auto bit_component : pointer_t.bit_components){
-                std::cout << "    " << "From DescriptorSetID: " << bit_component.set_id << ", Binding: " << bit_component.binding_id << ", Byte Offset: " << bit_component.byte_offset << ", Bitsize: " << bit_component.bitcount << ", to val Bit Offset: " << bit_component.val_bit_offset << std::endl;
-            }
-        }
     }
 }
 
@@ -599,6 +592,10 @@ size_t SPIRVSimulator::GetBitizeOfType(uint32_t type_id){
         throw std::runtime_error("SPIRV simulator: Attempt to extract size of a void type");
     }
 
+    if (verbose_){
+        std::cout << execIndent << "Fetching bitsize of type with ID: " << type_id << std::endl;
+    }
+
     size_t bitcount = 0;
     if (type.kind == Type::Kind::Bool || type.kind == Type::Kind::Int || type.kind == Type::Kind::Float){
         bitcount += type.scalar.width;
@@ -608,11 +605,17 @@ size_t SPIRVSimulator::GetBitizeOfType(uint32_t type_id){
     } else if (type.kind == Type::Kind::Matrix){
         uint32_t col_type_id = type.matrix.col_type_id;
         bitcount += GetBitizeOfType(col_type_id) * type.matrix.col_count;
-    } else if (type.kind == Type::Kind::Array || type.kind == Type::Kind::RuntimeArray){
+    } else if (type.kind == Type::Kind::Array){
         uint32_t elem_type_id = type.vector.elem_type_id;
         uint64_t array_len = std::get<uint64_t>(GetValue(type.array.length_id));
 
         bitcount += GetBitizeOfType(elem_type_id) * array_len;
+    } else if (type.kind == Type::Kind::RuntimeArray){
+        throw std::runtime_error("SPIRV simulator: Fetching bitsize of RuntimeArray, this is currently not implemented");
+
+        //uint32_t elem_type_id = type.vector.elem_type_id;
+        //uint64_t array_len = std::get<uint64_t>(GetValue(type.array.length_id));
+        //bitcount += GetBitizeOfType(elem_type_id);
     } else if (type.kind == Type::Kind::Struct){
         if (struct_members_.find(type_id) == struct_members_.end()){
             throw std::runtime_error("SPIRV simulator: Struct type with id: " + std::to_string(type_id) + " has not members");
@@ -626,6 +629,40 @@ size_t SPIRVSimulator::GetBitizeOfType(uint32_t type_id){
     }
 
     return bitcount;
+}
+
+size_t SPIRVSimulator::GetBitizeOfTargetType(const PointerV& pointer){
+    const Type* type = &types_.at(pointer.type_id);
+
+    uint32_t type_id = type->pointer.pointee_type_id;
+    type = &types_.at(type_id);
+    for (uint32_t idx : pointer.idx_path){
+        if (type->kind == Type::Kind::Struct){
+
+            if (struct_members_.find(type_id) == struct_members_.end()){
+                throw std::runtime_error("SPIRV simulator: Struct type with id: " + std::to_string(type_id) + " has no members");
+            }
+
+            type_id = struct_members_.at(type_id)[idx];
+            type = &types_.at(type_id);
+        } else if ((type->kind == Type::Kind::Array) || (type->kind == Type::Kind::RuntimeArray)) {
+            type_id = type->array.elem_type_id;
+            type = &types_.at(type_id);
+        } else if (type->kind == Type::Kind::Vector) {
+            type_id = type->vector.elem_type_id;
+            type = &types_.at(type_id);
+        } else if (type->kind == Type::Kind::Matrix) {
+            type_id = type->matrix.col_type_id;
+            type = &types_.at(type_id);
+        } else if (type->kind == Type::Kind::Pointer) {
+            type_id = type->pointer.pointee_type_id;
+            type = &types_.at(type_id);
+        } else {
+            throw std::runtime_error("SPIRV simulator: Unhandled type in GetBitizeOfTargetType");
+        }
+    }
+
+    return GetBitizeOfType(type_id);
 }
 
 void SPIRVSimulator::GetBaseTypeIDs(uint32_t type_id, std::vector<uint32_t>& output){
@@ -934,7 +971,7 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id, const uint32_t** initial_dat
                     std::memcpy(&pointer_value, reinterpret_cast<const std::byte*>(initial_data), sizeof(uint64_t));
                 } else {
                     if (verbose_){
-                        std::cout << execIndent << "SPIRV simulator: A pointer with StorageClassPhysicalStorageBuffer was default initialized without input buffer data available. The actual pointer address will be unknown (null)" << std::endl;
+                        std::cout << execIndent << "A pointer with StorageClassPhysicalStorageBuffer was default initialized without input buffer data available. The actual pointer address will be unknown (null)" << std::endl;
                     }
                 }
 
@@ -995,6 +1032,10 @@ std::vector<DataSourceBits> SPIRVSimulator::FindDataSourcesFromResultID(uint32_t
         type_id = instruction.words[1];
     }
 
+    if (verbose_){
+        std::cout << execIndent << "Tracing value source backwards through: " << spv::OpToString(instruction.opcode) << ": " << result_id << std::endl;
+    }
+
     switch (instruction.opcode){
         case spv::Op::OpSpecConstantComposite:{
             for (uint32_t component_id = 3; component_id < instruction.word_count; ++component_id){
@@ -1020,6 +1061,7 @@ std::vector<DataSourceBits> SPIRVSimulator::FindDataSourcesFromResultID(uint32_t
 
             DataSourceBits data_source;
             data_source.location = BitLocation::SpecConstant;
+            data_source.idx = 0;
             data_source.binding_id = spec_id;
             data_source.set_id = 0;
             data_source.byte_offset = 0;
@@ -1030,9 +1072,68 @@ std::vector<DataSourceBits> SPIRVSimulator::FindDataSourcesFromResultID(uint32_t
             break;
         }
         case spv::Op::OpLoad:{
-            throw std::runtime_error("SPIRV simulator: OpLoad encountered in FindDataSourcesFromResultID, this needs special handling (to deal with potential OpStore links)");
+            uint32_t pointer_id = instruction.words[3];
+
+
+            if (values_stored_.find(pointer_id) == values_stored_.end()){
+                const PointerV& pointer = std::get<PointerV>(GetValue(pointer_id));
+
+                if (pointer.storage_class == spv::StorageClass::StorageClassFunction){
+                    throw std::runtime_error("SPIRV simulator: A StorageClassFunction is being read from without having been stored to, this is a symptom of a serious error somewhere");
+                }
+
+                DataSourceBits data_source;
+                data_source.location = BitLocation::StorageClass;
+                data_source.storage_class = (spv::StorageClass)pointer.storage_class;
+                data_source.idx = 0;
+
+                if (pointer.storage_class == spv::StorageClass::StorageClassPushConstant){
+                    data_source.binding_id = 0;
+                    data_source.set_id = 0;
+                } else if (pointer.storage_class != spv::StorageClass::StorageClassPhysicalStorageBuffer){
+                    if (!HasDecorator(pointer.obj_id, spv::Decoration::DecorationDescriptorSet)){
+                        throw std::runtime_error("SPIRV simulator: Missing DecorationDescriptorSet for pointee object");
+                    }
+
+                    if (!HasDecorator(pointer.obj_id, spv::Decoration::DecorationBinding)){
+                        throw std::runtime_error("SPIRV simulator: Missing DecorationBinding for pointee object");
+                    }
+
+                    data_source.binding_id = GetDecoratorLiteral(pointer.obj_id, spv::Decoration::DecorationBinding);
+                    data_source.set_id = GetDecoratorLiteral(pointer.obj_id, spv::Decoration::DecorationDescriptorSet);
+                } else {
+                    data_source.binding_id = 0;
+                    data_source.set_id = 0;
+                }
+
+                data_source.byte_offset = GetPointerOffset(pointer);
+                data_source.bit_offset = 0;
+                // This does not account for padding, but its probably fine here since it makes little sense to load complex constructs here
+                data_source.bitcount = GetBitizeOfTargetType(pointer);
+                data_source.val_bit_offset = 0;
+                results.push_back(data_source);
+            } else {
+                uint32_t true_source = values_stored_.at(pointer_id);
+
+                std::vector<DataSourceBits> component_result = FindDataSourcesFromResultID(true_source);
+                results.insert(results.end(), component_result.begin(), component_result.end());
+            }
+            break;
         }
         case spv::Op::OpConstant:{
+            DataSourceBits data_source;
+            data_source.location = BitLocation::Constant;
+            data_source.idx = 0;
+            data_source.binding_id = 0;
+            data_source.set_id = 0;
+            uint32_t instruction_index = result_id_to_inst_index_.at(result_id);
+            uint32_t header_word_count = 5;
+            data_source.byte_offset = (instruction_index + header_word_count) * sizeof(uint32_t);
+            data_source.bit_offset = 0;
+            data_source.bitcount = GetBitizeOfType(type_id);;
+            data_source.val_bit_offset = 0;
+            results.push_back(data_source);
+            break;
         }
         default:{
             throw std::runtime_error("SPIRV simulator: Unimplemented opcode in FindDataSourcesFromResultID: " + std::string(spv::OpToString(instruction.opcode)));
@@ -1060,7 +1161,7 @@ Value& SPIRVSimulator::Deref(const PointerV &ptr){
                 // We assume a runtime array here and just return the first entry
                 // TODO: We should probably change this to use sparse access with maps or something
                 if (verbose_){
-                    std::cout << execIndent << "SPIRV simulator: Array index OOB, assuming runtime array and returning first element" << std::endl;
+                    std::cout << execIndent << "Array index OOB, assuming runtime array and returning first element" << std::endl;
                 }
                 value = &agg->elems[0];
             } else {
@@ -1373,7 +1474,7 @@ void SPIRVSimulator::Op_Constant(const Instruction& instruction){
             SetValue(result_id, MakeScalar(type_id, buffer_pointer));
         } else {
             if (verbose_){
-                std::cout << execIndent << "SPIRV simulator: No spec constant data provided for result_id: " << result_id << ", using default" << std::endl;
+                std::cout << execIndent << "No spec constant data provided for result_id: " << result_id << ", using default" << std::endl;
             }
             const uint32_t* buffer_pointer = instruction.words.subspan(3).data();
             SetValue(result_id, MakeScalar(type_id, buffer_pointer));
@@ -1505,7 +1606,7 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
         const std::byte* external_pointer = input_data_.push_constants.data();
         if (!input_data_.push_constants.size()){
             if (verbose_){
-                std::cout << execIndent << "SPIRV simulator: No push constant initialization data mapped in the inputs, setting to defaults, this may crash" << std::endl;
+                std::cout << execIndent << "No push constant initialization data mapped in the inputs, setting to defaults, this may crash" << std::endl;
             }
             Value init = MakeDefault(type.pointer.pointee_type_id);
             Heap(storage_class)[result_id] = init;
@@ -1539,7 +1640,7 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
 
         if (!external_pointer){
             if (verbose_){
-                std::cout << execIndent << "SPIRV simulator: No binding initialization data mapped in the inputs for descriptor set: " << descriptor_set << ", binding: " << binding << ", setting to defaults, this may crash" << std::endl;
+                std::cout << execIndent << "No binding initialization data mapped in the inputs for descriptor set: " << descriptor_set << ", binding: " << binding << ", setting to defaults, this may crash" << std::endl;
             }
             Value init = MakeDefault(type.pointer.pointee_type_id);
             Heap(storage_class)[result_id] = init;
@@ -1622,8 +1723,13 @@ void SPIRVSimulator::Op_Store(const Instruction& instruction){
     If present, any Memory Operands must begin with a memory operand literal.
     If not present, it is the same as specifying the memory operand None.
     */
-    const PointerV& pointer = std::get<PointerV>(GetValue(instruction.words[1]));
-    Deref(pointer) = GetValue(instruction.words[2]);
+    uint32_t pointer_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    const PointerV& pointer = std::get<PointerV>(GetValue(pointer_id));
+    Deref(pointer) = GetValue(result_id);
+
+    values_stored_[pointer_id] = result_id;
+
 }
 
 void SPIRVSimulator::Op_AccessChain(const Instruction& instruction){
@@ -2635,7 +2741,6 @@ void SPIRVSimulator::Op_FDiv(const Instruction& instruction){
 
     Results are computed per component.
     */
-
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
@@ -2681,7 +2786,7 @@ void SPIRVSimulator::Op_FDiv(const Instruction& instruction){
             throw std::runtime_error("SPIRV simulator: Found non-floating point operand in Op_FDiv");
         }
 
-        result = std::get<double>(op1) + std::get<double>(op2);
+        result = std::get<double>(op1) / std::get<double>(op2);
 
         SetValue(result_id, result);
     } else {
@@ -3335,4 +3440,193 @@ void SPIRVSimulator::Op_ConvertUToPtr(const Instruction& instruction){
     pointer_data.bit_components = FindDataSourcesFromResultID(integer_id);
     pointer_data.raw_pointer_value = pointer_value;
     physical_address_pointer_source_data_.push_back(std::move(pointer_data));
+}
+
+void SPIRVSimulator::Op_UDiv(const Instruction& instruction){
+    /*
+    OpUDiv
+
+    Unsigned-integer division of Operand 1 divided by Operand 2.
+    Result Type must be a scalar or vector of integer type, whose Signedness operand is 0.
+    The types of Operand 1 and Operand 2 both must be the same as Result Type.
+
+    Results are computed per component. Behavior is undefined if Operand 2 is 0.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            throw std::runtime_error("SPIRV simulator: Operands set to be vector type in Op_UDiv, but they are not, illegal input parameters");
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            throw std::runtime_error("SPIRV simulator: Operands are vector type but not of equal length in Op_UDiv");
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result;
+
+            if(!(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i]))){
+                throw std::runtime_error("SPIRV simulator: Found unsigned-integer operand in Op_UDiv vector operands");
+            }
+
+            elem_result = std::get<uint64_t>(vec1->elems[i]) / std::get<uint64_t>(vec2->elems[i]);
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Int){
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        Value result;
+        if(!(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2))){
+            throw std::runtime_error("SPIRV simulator: Found unsigned-integer operand in Op_UDiv");
+        }
+
+        result = std::get<uint64_t>(op1) / std::get<uint64_t>(op2);
+
+        SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_UDiv, must be vector or unsigned-integer");
+    }
+}
+
+void SPIRVSimulator::Op_UMod(const Instruction& instruction){
+    /*
+    OpUMod
+
+    Unsigned modulo operation of Operand 1 modulo Operand 2.
+    Result Type must be a scalar or vector of integer type, whose Signedness operand is 0.
+    The types of Operand 1 and Operand 2 both must be the same as Result Type.
+
+    Results are computed per component. Behavior is undefined if Operand 2 is 0.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            throw std::runtime_error("SPIRV simulator: Operands set to be vector type in Op_UDiv, but they are not, illegal input parameters");
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            throw std::runtime_error("SPIRV simulator: Operands are vector type but not of equal length in Op_UDiv");
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result;
+
+            if(!(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i]))){
+                throw std::runtime_error("SPIRV simulator: Found unsigned-integer operand in Op_UDiv vector operands");
+            }
+
+            elem_result = std::get<uint64_t>(vec1->elems[i]) % std::get<uint64_t>(vec2->elems[i]);
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Int){
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        Value result;
+        if(!(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2))){
+            throw std::runtime_error("SPIRV simulator: Found unsigned-integer operand in Op_UDiv");
+        }
+
+        result = std::get<uint64_t>(op1) % std::get<uint64_t>(op2);
+
+        SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_UDiv, must be vector or unsigned-integer");
+    }
+}
+
+void SPIRVSimulator::Op_ULessThan(const Instruction& instruction){
+    /*
+    OpULessThan
+
+    Unsigned-integer comparison if Operand 1 is less than Operand 2.
+    Result Type must be a scalar or vector of Boolean type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type. They must have the same component width, and they must have the same number of components as Result Type.
+
+    Results are computed per component.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        if(!(std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2))){
+            throw std::runtime_error("SPIRV simulator: Operands set to be vector type in Op_ULessThan, but they are not, illegal input parameters");
+        }
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        if ((vec1->elems.size() != vec2->elems.size()) || (vec1->elems.size() != type.vector.elem_count)){
+            throw std::runtime_error("SPIRV simulator: Operands are vector type but not of equal length in Op_ULessThan");
+        }
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result;
+
+            if(!(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i]))){
+                throw std::runtime_error("SPIRV simulator: Found non-unsigned integer operand in Op_ULessThan vector operands");
+            }
+
+            elem_result = (uint64_t)(std::get<uint64_t>(vec1->elems[i]) < std::get<uint64_t>(vec2->elems[i]));
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Bool){
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        Value result;
+        if(!(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2))){
+            throw std::runtime_error("SPIRV simulator: Found non-unsigned integer operand in Op_ULessThan");
+        }
+
+        result = (uint64_t)(std::get<uint64_t>(op1) < std::get<uint64_t>(op2));
+
+        SetValue(result_id, result);
+    } else {
+        throw std::runtime_error("SPIRV simulator: Invalid result type int Op_ULessThan, must be vector or bool");
+    }
 }
