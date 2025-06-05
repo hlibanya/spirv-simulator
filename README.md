@@ -1,3 +1,10 @@
+# DO NOT USE
+
+Unless you have an ongoing dialogue with the main developers of the tool.
+
+Currently under active, early development. The whole project and the tool interface is subject to large changes on a day-to-day basis, and can break at any time.
+
+
 # spirv-simulator
 
 This repo implements a SPIRV simulator that can be used to detect and extract pointers to physical storage buffers in API streams.
@@ -5,7 +12,7 @@ This repo implements a SPIRV simulator that can be used to detect and extract po
 The intended use case is for it to be integrated with tracing and post processing graphics API inspection tools to find and handle pointers to GPU memory embedded in other data sources.
 
 
-It is not intended for simulating full dispatches of all threads in a batch of GPU work (although it could technically do this to some extent it is not optimized for it).
+It is not intended for simulating full dispatches of all threads in a batch of GPU work (although it could technically do this to some extent, it is not optimized for it).
 
 
 ## dependencies
@@ -29,13 +36,13 @@ To run a test:
 
 
 If you wish to include the SPIRV dependencies from your system, set:
-
+```
 SPIRV_HEADERS_PRESENT=1
-
+```
 Before compiling, if this is not set it will use the spirv.hpp file instead.
 
 
-## Execution framework
+## Execution framework (WIP)
 
 The main framework is implemented in the SPIRVSimulator class and the InputData class.
 
@@ -55,7 +62,7 @@ auto physical_address_data = sim.GetPhysicalAddressData();
 ```
 
 
-## Framework details
+## Framework details (WIP)
 
 The main framework is based around 3 structures:
 ```

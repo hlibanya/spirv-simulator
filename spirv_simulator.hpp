@@ -349,7 +349,7 @@ private:
     bool ValueIsArbitrary(uint32_t result_id) const {return arbitrary_values_.contains(result_id);};
     std::unordered_map<uint32_t,Value>& Heap(uint32_t sc){ return heaps_[sc]; }
 
-    // Opcode handlers
+    // Opcode handlers, 67/498 implemented for SPIRV 1.6
     void T_Void(const Instruction&);
     void T_Bool(const Instruction&);
     void T_Int(const Instruction&);
