@@ -24,6 +24,7 @@ SPIRVSimulator::SPIRVSimulator(const std::vector<uint32_t>& program_words, const
     input_data_ = input_data;
     DecodeHeader();
     RegisterOpcodeHandlers();
+    CheckOpcodeSupport();
     ParseAll();
     Validate();
 }
@@ -72,6 +73,12 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpTypeForwardPointer,     [this](const Instruction& i){T_ForwardPointer(i);});
     R(spv::Op::OpTypeRuntimeArray,       [this](const Instruction& i){T_RuntimeArray(i);});
     R(spv::Op::OpTypeFunction,           [this](const Instruction& i){T_Function(i);});
+    R(spv::Op::OpTypeImage,              [this](const Instruction& i){T_Image(i);});
+    R(spv::Op::OpTypeSampler,            [this](const Instruction& i){T_Sampler(i);});
+    R(spv::Op::OpTypeSampledImage,       [this](const Instruction& i){T_SampledImage(i);});
+    R(spv::Op::OpTypeOpaque,             [this](const Instruction& i){T_Opaque(i);});
+    R(spv::Op::OpTypeNamedBarrier,       [this](const Instruction& i){T_NamedBarrier(i);});
+    R(spv::Op::OpEntryPoint,          [this](const Instruction& i){Op_EntryPoint(i);});
     R(spv::Op::OpExtInstImport,          [this](const Instruction& i){Op_ExtInstImport(i);});
     R(spv::Op::OpConstant,               [this](const Instruction& i){Op_Constant(i);});
     R(spv::Op::OpConstantComposite,      [this](const Instruction& i){Op_ConstantComposite(i);});
@@ -130,9 +137,41 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpULessThan,              [this](const Instruction& i){Op_ULessThan(i);});
 }
 
+void SPIRVSimulator::CheckOpcodeSupport(){
+    size_t current_word = 5;
+
+    std::set<spv::Op> unimplemented_opcodes;
+    while(current_word < program_words_.size()){
+        uint32_t header_word = program_words_[current_word];
+        uint32_t word_count = header_word >> kWordCountShift;
+        spv::Op opcode = (spv::Op)(header_word & kOpcodeMask);
+
+        bool is_implemented = opcode_dispatchers_.find(opcode) != opcode_dispatchers_.end();
+        if (!is_implemented){
+            unimplemented_opcodes.insert(opcode);
+        }
+
+        current_word += word_count;
+    }
+
+    if (!unimplemented_opcodes.empty()){
+        std::cout << "SPIRV simulator: Unimplemented OpCodes detected:" << std::endl;
+        for (auto it = unimplemented_opcodes.begin(); it != unimplemented_opcodes.end(); ++it){
+            std::cout << execIndent << spv::OpToString(*it) << std::endl;
+        }
+
+        throw std::runtime_error("SPIRV simulator: Unhandled opcodes detected, implement them to continue!");
+    }
+    std::cout << std::endl;
+}
+
 void SPIRVSimulator::Validate(){
     // TODO: Expand this (a lot)
     for(auto &[id, t] : types_){
+        if (t.kind == Type::Kind::Matrix){
+            throw std::runtime_error("SPIRV simulator: Matrix type detected, finish adding support for parsing these properly to continue");
+        }
+
         if(t.kind == Type::Kind::Array && !types_.contains(t.array.elem_type_id)){
             throw std::runtime_error("SPIRV simulator: Missing  array elem type");
         } else if (t.kind == Type::Kind::Vector && !types_.contains(t.vector.elem_type_id)){
@@ -171,8 +210,6 @@ void SPIRVSimulator::ParseAll(){
     }
 
     bool in_function = false;
-
-    std::vector<uint32_t> unimplemented_instructions;
 
     while(!stream_.empty()){
         Instruction instruction;
@@ -218,32 +255,12 @@ void SPIRVSimulator::ParseAll(){
             default:{
                 if (!in_function){
                     ExecuteInstruction(instruction);
-                } else {
-                    bool is_implemented = opcode_dispatchers_.find(instruction.opcode) != opcode_dispatchers_.end();
-                    if(!is_implemented){
-                        HandleUnimplementedOpcode(instruction);
-                    }
                 }
                 break;
             }
         }
 
         ++instruction_index;
-    }
-
-    if (verbose_){
-        std::cout << "SPIRV simulator: Parsing complete!\n" << std::endl;
-
-        if (unimplemented_instructions_.size() && verbose_){
-            // TODO: Deduplicate, probably better to use a map to track the ids
-            std::cout << "SPIRV simulator: The following instructions are unsupported:" << std::endl;
-
-            for (auto instruction : unimplemented_instructions_){
-                PrintInstruction(instruction);
-            }
-
-            std::cout << std::endl;
-        }
     }
 }
 
@@ -346,7 +363,10 @@ void SPIRVSimulator::ExecuteInstruction(const Instruction& instruction){
 }
 
 void SPIRVSimulator::HandleUnimplementedOpcode(const Instruction& instruction){
-    unimplemented_instructions_.push_back(instruction);
+    if (verbose_){
+        std::cout << execIndent << "Found unimplemented opcode during execution of instruction: " << std::endl;
+        PrintInstruction(instruction);
+    }
 }
 
 std::string SPIRVSimulator::GetValueString(const Value& value){
@@ -1447,9 +1467,83 @@ void SPIRVSimulator::T_Function(const Instruction& instruction){
 }
 
 
+void SPIRVSimulator::T_Image(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeImage);
+
+    uint32_t result_id = instruction.words[1];
+    uint32_t sampled_type_id = instruction.words[2];
+    //uint32_t dim = instruction.words[3];
+    //uint32_t depth = instruction.words[4];
+    //uint32_t arrayed = instruction.words[5];
+    //uint32_t multisampled = instruction.words[6];
+    //uint32_t sampled = instruction.words[7];
+    //uint32_t image_format = instruction.words[8];
+
+    Type type;
+    type.kind = Type::Kind::Image;
+    type.image = {
+        sampled_type_id
+    };
+    types_[result_id] = type;
+}
+
+void SPIRVSimulator::T_Sampler(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeSampler);
+
+    uint32_t result_id = instruction.words[1];
+
+    Type type;
+    type.kind = Type::Kind::Sampler;
+    types_[result_id] = type;
+}
+
+void SPIRVSimulator::T_SampledImage(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeSampledImage);
+
+    uint32_t result_id = instruction.words[1];
+    uint32_t image_type_id = instruction.words[2];
+
+    Type type;
+    type.kind = Type::Kind::SampledImage;
+    type.sampled_image = {
+        image_type_id
+    };
+    types_[result_id] = type;
+}
+
+void SPIRVSimulator::T_Opaque(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeOpaque);
+
+    uint32_t result_id = instruction.words[1];
+    uint32_t name_literal = instruction.words[2];
+
+    Type type;
+    type.kind = Type::Kind::Opaque;
+    type.opaque = {
+        name_literal
+    };
+    types_[result_id] = type;
+}
+
+void SPIRVSimulator::T_NamedBarrier(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeNamedBarrier);
+
+    uint32_t result_id = instruction.words[1];
+
+    Type type;
+    type.kind = Type::Kind::NamedBarrier;
+    types_[result_id] = type;
+}
+
 // ---------------------------------------------------------------------------
 //  Oparation implementations
 // ---------------------------------------------------------------------------
+
+void SPIRVSimulator::Op_EntryPoint(const Instruction& instruction){
+    // We handle these during init/parsing
+    assert(instruction.opcode == spv::Op::OpEntryPoint);
+}
+
 void SPIRVSimulator::Op_ExtInstImport(const Instruction& instruction){
     /*
     OpExtInstImport

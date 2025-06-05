@@ -147,7 +147,12 @@ struct Type{
         Array,
         Struct,
         Pointer,
-        RuntimeArray  // TODO: We can/probably should make these maps and use sparse access (eg. add a new map value for these and load during OpAccessChain)
+        RuntimeArray,  // TODO: We can/probably should make these maps and use sparse access (eg. add a new map value for these and load during OpAccessChain)
+        Image,
+        Sampler,
+        SampledImage,
+        Opaque,
+        NamedBarrier
     } kind;
 
     struct ScalarTypeData{uint32_t width; bool is_signed;};
@@ -155,6 +160,9 @@ struct Type{
     struct MatrixTypeData{uint32_t col_type_id;  uint32_t col_count;};
     struct ArrayTypeData{uint32_t elem_type_id; uint32_t length_id;};
     struct PointerTypeData{uint32_t storage_class; uint32_t pointee_type_id;};
+    struct ImageTypeData{uint32_t sampled_type_id;};
+    struct SampledImageTypeData{uint32_t image_type_id;};
+    struct OpaqueTypeData{uint32_t name;};
 
     union{
         ScalarTypeData scalar;
@@ -162,6 +170,9 @@ struct Type{
         MatrixTypeData matrix;
         ArrayTypeData array;
         PointerTypeData pointer;
+        ImageTypeData image;
+        SampledImageTypeData sampled_image;
+        OpaqueTypeData opaque;
     };
     Type(): kind(Kind::Void){scalar = {0, false};}
 };
@@ -265,7 +276,6 @@ private:
 
     // Debug only
     bool verbose_;
-    std::vector<Instruction> unimplemented_instructions_;
 
     // These hold information about any pointers that reference physical storage buffers
     std::vector<PointerV> physical_address_pointers_;
@@ -322,6 +332,7 @@ private:
     void DecodeHeader();
     void ParseAll();
     void RegisterOpcodeHandlers();
+    void CheckOpcodeSupport();
     void Validate();
     void ExecuteInstruction(const Instruction&);
     std::string GetValueString(const Value&);
@@ -362,6 +373,12 @@ private:
     void T_ForwardPointer(const Instruction&);
     void T_RuntimeArray(const Instruction&);
     void T_Function(const Instruction&);
+    void T_Image(const Instruction&);
+    void T_Sampler(const Instruction&);
+    void T_SampledImage(const Instruction&);
+    void T_Opaque(const Instruction&);
+    void T_NamedBarrier(const Instruction&);
+    void Op_EntryPoint(const Instruction&);
     void Op_ExtInstImport(const Instruction&);
     void Op_Constant(const Instruction&);
     void Op_ConstantComposite(const Instruction&);
