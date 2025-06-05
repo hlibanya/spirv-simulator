@@ -413,7 +413,6 @@ std::string SPIRVSimulator::GetTypeString(const Type& type){
 void SPIRVSimulator::PrintInstruction(const Instruction& instruction){
     bool has_result = false;
     bool has_type = false;
-
     spv::HasResultAndType(instruction.opcode, &has_result, &has_type);
 
     if (verbose_){
@@ -514,7 +513,7 @@ bool SPIRVSimulator::HasDecorator(uint32_t result_id, uint32_t member_id, spv::D
 
 uint32_t SPIRVSimulator::GetDecoratorLiteral(uint32_t result_id, spv::Decoration decorator, size_t literal_offset){
     /*
-    This will crash if the target id does not have the given decorator
+    This will abort if the target id does not have the given decorator
     Check with HasDecorator first
     */
     if (decorators_.find(result_id) != decorators_.end()){
@@ -534,7 +533,7 @@ uint32_t SPIRVSimulator::GetDecoratorLiteral(uint32_t result_id, spv::Decoration
 
 uint32_t SPIRVSimulator::GetDecoratorLiteral(uint32_t result_id, uint32_t member_id, spv::Decoration decorator, size_t literal_offset){
     /*
-    This will crash if the target id does not have the given decorator
+    This will abort if the target id does not have the given decorator
     Check with HasDecorator first
     */
     if (struct_decorators_.find(result_id) != struct_decorators_.end()){
@@ -743,7 +742,7 @@ void SPIRVSimulator::ExtractWords(const std::byte* external_pointer, uint32_t ty
         }
     } else if (type.kind == Type::Kind::Matrix){
         // TODO: Handle row/col major decorators and MatrixStride decorator
-        throw std::runtime_error("SPIRV simulator: Attempt to extract a matrix value fro ma input buffer, this is unimplemented at present, fix this!");
+        throw std::runtime_error("SPIRV simulator: Attempt to extract a matrix value from a input buffer, this is unimplemented at present, fix this!");
     } else {
         // Assume everything else is tightly packed
         std::vector<uint32_t> base_type_ids;

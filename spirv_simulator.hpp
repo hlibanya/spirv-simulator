@@ -80,30 +80,38 @@ enum BitLocation{
 
 struct DataSourceBits{
     /*
-    Structure describing where a sequence of bits that ended up either being used to construct
+    Structure describing where a sequence of bits can be found that ended up being used to construct
     (or that was eventually interpreted as) a pointer pointing to data with the PhysicalStorageBuffer storage class
     */
 
     // Specifies where the data comes from
     BitLocation location;
+
     // If location is StorageClass, this holds the storage class
     spv::StorageClass storage_class;
+
     // If the location is StorageClass and the pointer is located in a array of Block's
     // then this is the array index which holds the descriptor block containing the pointer
     uint64_t idx;
+
     // DescriptorSet ID when location is StorageClass. Unused otherwise
     uint64_t set_id;
+
     // Binding ID when location is StorageClass.
     // SpecId when location is SpecConstant.
     // Unused otherwise
     uint64_t binding_id;
+
     // Absolute byte offset into the containing buffer where the data is located
     // If location is Constant, then this will be the byte offset into the spirv shader words input
     uint64_t byte_offset;
+
     // The bit offset from the byte offset where the data was stored
     uint64_t bit_offset;
+
     // Number of bits in the bit sequence
     uint64_t bitcount;
+
     // Bit offset into the final pointer where this data ended up
     uint64_t val_bit_offset;
 };
@@ -120,9 +128,10 @@ struct PhysicalAddressData{
 struct Instruction{
     spv::Op opcode;
 
-    // word_count is the total number of words, including the word holding the opcode + wordcount value
-    // Therefore this is a redundant value as the first uint32 in words will also hold this, but its
-    // included for simplicity and clarity
+    // word_count is the total number of words this instruction is composed of,
+    // including the word holding the opcode + wordcount value.
+    // This (along with the opcode above) is a redundant value as the first uint32 in words will also hold it,
+    // but it is included/decoded here for ease-of-use and clarity
     uint16_t word_count;
     std::span<const uint32_t> words;
 };
@@ -187,6 +196,7 @@ struct AggregateV{
 struct PointerV {
     // Always the index of the value that this pointer points to
     uint32_t obj_id;
+    // The TypeID of this pointer
     uint32_t type_id;
     uint32_t storage_class;
 
@@ -234,7 +244,7 @@ private:
     uint32_t next_external_id_ = 0;
 
     // Parsing artefacts
-    InputData input_data_;
+    InputData input_data_;  // TODO: Consider not copying this, inputs can be huge, revisit if it becomes a problem
     std::set<uint32_t> entry_points_;
     std::vector<uint32_t> program_words_;
     std::span<const uint32_t> stream_;
@@ -280,12 +290,19 @@ private:
     struct Frame{
         size_t pc;
         uint32_t result_id;
+
+        // result_id -> Value
         std::unordered_map<uint32_t, Value> locals;
+
+        // obj_id -> Heap Value
         std::unordered_map<uint32_t, Value> func_heap;
     };
     std::vector<Frame> call_stack_;
+
+    // result_id -> Value
     std::unordered_map<uint32_t, Value> globals_;
-    // storage‑class (key) heaps
+
+    // storage_class -> obj_id -> Heap Value
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, Value>> heaps_;
 
     // Dispatcher

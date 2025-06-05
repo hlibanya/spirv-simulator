@@ -16,9 +16,9 @@ G++ 10 or newer and Clang 10 or newer should do the trick.
 To build:
 
 ```
-cmake -H. -Bbuild;
-cd build;
-make;
+cmake -H. -Bbuild
+cd build
+make
 ```
 
 To run a test:
@@ -58,30 +58,34 @@ auto physical_address_data = sim.GetPhysicalAddressData();
 ## Framework details
 
 The main framework is based around 3 structures:
-
-Value:
+```
+- Value:
 	- This encapsulates all SPIRV valid type values.
 
-Type:
+- Type:
 	- Describes the type details of a SPIRV value. All values have an associated Type.
 
 Instruction:
 	- Encapsulates a decoded instruction.
-
+```
 
 And these three access member functions:
-
-GetValue(<ID>):
+```
+- GetValue(<ID>):
 	- Fetches the Value associated with a SPIRV result ID.
 
-SetValue(<ID>, Value):
+- SetValue(<ID>, Value):
 	- Writes a Value to the specified SPIRV result ID.
 
-Deref(Value(PointerV)):
+- Deref(Value(PointerV)):
 	- Returns a reference to the Value pointed to by a framework Pointer Value, this can then be written to or read from as needed.
+```
 
-
-The Value structure is essentially just a C++ variant, the underlying value can be queried with the standard C++ variant functionality (eg. std::holds_alternative<T>(Value) and std::get<T>(Value)).
+The Value structure is essentially just a C++ variant, the underlying value can be queried with the standard C++ variant functionality, eg:
+```
+std::holds_alternative<T>(Value);
+std::get<T>(Value);
+```
 
 The Type structure holds 2 member variables, one is a Enum describing the kind of type it represents, the other is a union with metadata for the given type.
 
