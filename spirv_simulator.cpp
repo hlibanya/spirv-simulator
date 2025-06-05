@@ -133,19 +133,22 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
 void SPIRVSimulator::Validate(){
     // TODO: Expand this (a lot)
     for(auto &[id, t] : types_){
-        if(t.kind == Type::Kind::Array || t.kind == Type::Kind::RuntimeArray || t.kind == Type::Kind::Vector){
-            if(!types_.contains(t.vector.elem_type_id)){
-                throw std::runtime_error("SPIRV simulator: Missing elem type");
-            }
-        }
-        if(t.kind == Type::Kind::Matrix && !types_.contains(t.matrix.col_type_id)){
-            throw std::runtime_error("SPIRV simulator: Missing col type");
-        }
-        if(t.kind == Type::Kind::Pointer && !types_.contains(t.pointer.pointee_type_id)){
+        if(t.kind == Type::Kind::Array && !types_.contains(t.array.elem_type_id)){
+            throw std::runtime_error("SPIRV simulator: Missing  array elem type");
+        } else if (t.kind == Type::Kind::Vector && !types_.contains(t.vector.elem_type_id)){
+            throw std::runtime_error("SPIRV simulator: Missing vector elem type");
+        } else if (t.kind == Type::Kind::RuntimeArray && !types_.contains(t.array.elem_type_id)){
+            throw std::runtime_error("SPIRV simulator: Missing runtie array elem type");
+        } else if(t.kind == Type::Kind::Matrix && !types_.contains(t.matrix.col_type_id)){
+            throw std::runtime_error("SPIRV simulator: Missing matrix col type");
+        } else if(t.kind == Type::Kind::Pointer && !types_.contains(t.pointer.pointee_type_id)){
             throw std::runtime_error("SPIRV simulator: Missing pointee type");
-        }
-        if(t.kind == Type::Kind::Bool || t.kind == Type::Kind::Int || t.kind == Type::Kind::Float){
-            if (t.scalar.width != 32 && t.scalar.width != 64){
+        } else if(t.kind == Type::Kind::Bool || t.kind == Type::Kind::Int || t.kind == Type::Kind::Float){
+            if (t.scalar.width == 8 || t.scalar.width == 16){
+                std::cout << execIndent << "Scalar width is: " << t.scalar.width << ", this is untested but should work (if errors, suspect this and investigate)" << std::endl;
+            }
+
+            if (t.scalar.width != 8 && t.scalar.width != 16 && t.scalar.width != 32 && t.scalar.width != 64){
                 throw std::runtime_error("SPIRV simulator: We only allow 32 and 64 bit scalars at present");
             }
 
@@ -1269,6 +1272,8 @@ void SPIRVSimulator::GLSLExtHandler(
 //  Type creation handlers
 // ---------------------------------------------------------------------------
 void SPIRVSimulator::T_Void(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeVoid);
+
     uint32_t result_id = instruction.words[1];
 
     Type type;
@@ -1282,6 +1287,8 @@ void SPIRVSimulator::T_Void(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_Bool(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeBool);
+
     // We treat bools as 64 bit unsigned ints for simplicity
     uint32_t result_id = instruction.words[1];
 
@@ -1296,6 +1303,8 @@ void SPIRVSimulator::T_Bool(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_Int(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeInt);
+
     uint32_t result_id = instruction.words[1];
 
     Type type;
@@ -1309,6 +1318,8 @@ void SPIRVSimulator::T_Int(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_Float(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeFloat);
+
     // We dont handle floats encoded in other formats than the default at present
     uint32_t result_id = instruction.words[1];
 
@@ -1327,6 +1338,8 @@ void SPIRVSimulator::T_Float(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_Vector(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeVector);
+
     uint32_t result_id = instruction.words[1];
 
     Type type;
@@ -1340,6 +1353,8 @@ void SPIRVSimulator::T_Vector(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_Matrix(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeMatrix);
+
     uint32_t result_id = instruction.words[1];
 
     Type type;
@@ -1353,6 +1368,8 @@ void SPIRVSimulator::T_Matrix(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_Array(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeArray);
+
     uint32_t result_id = instruction.words[1];
 
     Type type;
@@ -1366,6 +1383,8 @@ void SPIRVSimulator::T_Array(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_Struct(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypeStruct);
+
     uint32_t result_id = instruction.words[1];
 
     Type type;
@@ -1382,6 +1401,8 @@ void SPIRVSimulator::T_Struct(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_Pointer(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTypePointer);
+
     uint32_t result_id = instruction.words[1];
     uint32_t storage_class = instruction.words[2];
     uint32_t pointee_type_id = instruction.words[3];
@@ -1396,6 +1417,8 @@ void SPIRVSimulator::T_Pointer(const Instruction& instruction){
 }
 
 void SPIRVSimulator::T_ForwardPointer(const Instruction& instruction) {
+    assert(instruction.opcode == spv::Op::OpTypeForwardPointer);
+
     // TODO: May not need this
     uint32_t pointer_type_id = instruction.words[1];
     uint32_t storage_class = instruction.words[2];
@@ -1403,6 +1426,8 @@ void SPIRVSimulator::T_ForwardPointer(const Instruction& instruction) {
 }
 
 void SPIRVSimulator::T_RuntimeArray(const Instruction& instruction) {
+    assert(instruction.opcode == spv::Op::OpTypeRuntimeArray);
+
     uint32_t result_id = instruction.words[1];
     uint32_t elem_type_id = instruction.words[2];
 
@@ -1416,8 +1441,9 @@ void SPIRVSimulator::T_RuntimeArray(const Instruction& instruction) {
 
 }
 
-void SPIRVSimulator::T_Function(const Instruction&){
+void SPIRVSimulator::T_Function(const Instruction& instruction){
     // This info is redundant for us, so treat it as a NOP
+    assert(instruction.opcode == spv::Op::OpTypeFunction);
 }
 
 
@@ -1443,6 +1469,8 @@ void SPIRVSimulator::Op_ExtInstImport(const Instruction& instruction){
 
     See Extended Instruction Sets for more information.
     */
+    assert(instruction.opcode == spv::Op::OpExtInstImport);
+
     uint32_t result_id = instruction.words[1];
     // SPIRV string literals are UTF-8 encoded, so basic c++ string functionality can be used to decode them
     extended_imports_[result_id] = std::string((char*)(&instruction.words[2]), (instruction.word_count - 2) * 4);
@@ -1456,6 +1484,8 @@ void SPIRVSimulator::Op_Constant(const Instruction& instruction){
     Value is the bit pattern for the constant. Types 32 bits wide or smaller take one word.
     Larger types take multiple words, with low-order words appearing first.
     */
+    assert(instruction.opcode == spv::Op::OpConstant || instruction.opcode == spv::Op::OpSpecConstant);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     const Type& type = types_.at(type_id);
@@ -1500,6 +1530,7 @@ void SPIRVSimulator::Op_ConstantComposite(const Instruction& instruction){
     The Constituents must appear in the order needed by the definition of the Result Type.
     The Constituents must all be <id>s of non-specialization constant-instruction declarations or an OpUndef.
     */
+    assert(instruction.opcode == spv::Op::OpConstantComposite || instruction.opcode == spv::Op::OpSpecConstantComposite);
     Op_CompositeConstruct(instruction);
 }
 
@@ -1528,6 +1559,8 @@ void SPIRVSimulator::Op_CompositeConstruct(const Instruction& instruction){
     If constructing a vector, there must be at least two Constituent operands.
 
     */
+    assert(instruction.opcode == spv::Op::OpCompositeConstruct || instruction.opcode == spv::Op::OpConstantComposite || instruction.opcode == spv::Op::OpSpecConstantComposite);
+
     // Composite: An aggregate (structure or an array), a matrix, or a vector.
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
@@ -1591,6 +1624,8 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
     Initializer must be an <id> from a constant instruction or a global (module scope) OpVariable instruction.
     Initializer must have the same type as the type pointed to by Result Type.
     */
+    assert(instruction.opcode == spv::Op::OpVariable);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t storage_class = instruction.words[3];
@@ -1703,6 +1738,8 @@ void SPIRVSimulator::Op_Load(const Instruction& instruction){
     If present, any Memory Operands must begin with a memory operand literal.
     If not present, it is the same as specifying the memory operand None.
     */
+    assert(instruction.opcode == spv::Op::OpLoad);
+
     //uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t pointer_id = instruction.words[3];
@@ -1724,6 +1761,8 @@ void SPIRVSimulator::Op_Store(const Instruction& instruction){
     If present, any Memory Operands must begin with a memory operand literal.
     If not present, it is the same as specifying the memory operand None.
     */
+    assert(instruction.opcode == spv::Op::OpStore);
+
     uint32_t pointer_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     const PointerV& pointer = std::get<PointerV>(GetValue(pointer_id));
@@ -1761,6 +1800,8 @@ void SPIRVSimulator::Op_AccessChain(const Instruction& instruction){
     - if indexing into a vector, array, or matrix, with the result type being a logical pointer type,
       causes undefined behavior if not in bounds.
     */
+    assert(instruction.opcode == spv::Op::OpAccessChain);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t base_id = instruction.words[3];
@@ -1806,7 +1847,7 @@ void SPIRVSimulator::Op_AccessChain(const Instruction& instruction){
     SetValue(result_id, new_pointer);
 }
 
-void SPIRVSimulator::Op_Function(const Instruction&){
+void SPIRVSimulator::Op_Function(const Instruction& instruction){
     /*
     OpFunction
 
@@ -1817,11 +1858,13 @@ void SPIRVSimulator::Op_Function(const Instruction&){
 
     Function Type is the result of an OpTypeFunction, which declares the types of the return value and parameters of the function.
     */
+    assert(instruction.opcode == spv::Op::OpFunction);
     // Nothing to do, we handle this when parsing instructions
 }
 
-void SPIRVSimulator::Op_FunctionEnd(const Instruction&){
+void SPIRVSimulator::Op_FunctionEnd(const Instruction& instruction){
     // This is a NOP in our design
+    assert(instruction.opcode == spv::Op::OpFunctionEnd);
 }
 
 void SPIRVSimulator::Op_FunctionCall(const Instruction& instruction){
@@ -1840,6 +1883,8 @@ void SPIRVSimulator::Op_FunctionCall(const Instruction& instruction){
     Note: A forward call is possible because there is no missing type information: Result Type must match the Return
     Type of the function, and the calling argument types must match the formal parameter types.
     */
+    assert(instruction.opcode == spv::Op::OpFunctionCall);
+
     uint32_t result_id = instruction.words[2];
     uint32_t function_id = instruction.words[3];
 
@@ -1860,6 +1905,8 @@ void SPIRVSimulator::Op_Label(const Instruction& instruction){
 
     References to a block are through the Result <id> of its label.
     */
+    assert(instruction.opcode == spv::Op::OpLabel);
+
     uint32_t result_id = instruction.words[1];
     prev_block_id_ = current_block_id_;
     current_block_id_ = result_id;
@@ -1874,6 +1921,8 @@ void SPIRVSimulator::Op_Branch(const Instruction& instruction){
     This instruction must be the last instruction in a block.
     */
     // TODO: We should probably verify that the target instructions we are jumping to are labels
+    assert(instruction.opcode == spv::Op::OpBranch);
+
     uint32_t result_id = instruction.words[1];
     call_stack_.back().pc = result_id_to_inst_index_.at(result_id);
 }
@@ -1898,17 +1947,21 @@ void SPIRVSimulator::Op_BranchConditional(const Instruction& instruction){
 
     This instruction must be the last instruction in a block.
     */
+    assert(instruction.opcode == spv::Op::OpBranchConditional);
+
     uint64_t condition = std::get<uint64_t>(GetValue(instruction.words[1]));
     call_stack_.back().pc = result_id_to_inst_index_.at(condition ? instruction.words[2] : instruction.words[3]);
 }
 
-void SPIRVSimulator::Op_Return(const Instruction&){
+void SPIRVSimulator::Op_Return(const Instruction& instruction){
     /*
     OpReturn
 
     Return with no value from a function with void return type.
     This instruction must be the last instruction in a block.
     */
+    assert(instruction.opcode == spv::Op::OpReturn);
+
     call_stack_.pop_back();
 }
 
@@ -1923,6 +1976,8 @@ void SPIRVSimulator::Op_ReturnValue(const Instruction& instruction){
 
     This instruction must be the last instruction in a block.
     */
+    assert(instruction.opcode == spv::Op::OpReturnValue);
+
     uint32_t value_id = instruction.words[1];
     uint32_t result_id = call_stack_.back().result_id;
     Value return_value = GetValue(value_id);
@@ -1944,6 +1999,8 @@ void SPIRVSimulator::Op_FAdd(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpFAdd);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
@@ -2001,6 +2058,8 @@ void SPIRVSimulator::Op_ExtInst(const Instruction& instruction){
 
     Operand 1, …​ are the operands to the extended instruction.
     */
+    assert(instruction.opcode == spv::Op::OpExtInst);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t set_id = instruction.words[3];
@@ -2023,8 +2082,9 @@ void SPIRVSimulator::Op_ExtInst(const Instruction& instruction){
 }
 
 
-void SPIRVSimulator::Op_SelectionMerge(const Instruction&){
+void SPIRVSimulator::Op_SelectionMerge(const Instruction& instruction){
     // This is a NOP in our design
+    assert(instruction.opcode == spv::Op::OpSelectionMerge);
 }
 
 void SPIRVSimulator::Op_FMul(const Instruction& instruction){
@@ -2037,6 +2097,8 @@ void SPIRVSimulator::Op_FMul(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpFMul);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
@@ -2083,9 +2145,10 @@ void SPIRVSimulator::Op_FMul(const Instruction& instruction){
     }
 }
 
-void SPIRVSimulator::Op_LoopMerge(const Instruction&){
+void SPIRVSimulator::Op_LoopMerge(const Instruction& instruction){
     // This is a NOP in our design
     // TODO: Double check this
+    assert(instruction.opcode == spv::Op::OpLoopMerge);
 }
 
 void SPIRVSimulator::Op_INotEqual(const Instruction& instruction){
@@ -2099,6 +2162,8 @@ void SPIRVSimulator::Op_INotEqual(const Instruction& instruction){
     They must have the same component width, and they must have the same number of components as Result Type.
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpINotEqual);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
@@ -2182,6 +2247,8 @@ void SPIRVSimulator::Op_IAdd(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpIAdd);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
@@ -2257,6 +2324,8 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpLogicalNot);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t operand_id = instruction.words[3];
@@ -2308,36 +2377,44 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
     }
 }
 
-void SPIRVSimulator::Op_Capability(const Instruction&) {
+void SPIRVSimulator::Op_Capability(const Instruction& instruction) {
     // This is a NOP in our design
+    assert(instruction.opcode == spv::Op::OpCapability);
 }
 
-void SPIRVSimulator::Op_Extension(const Instruction&) {
+void SPIRVSimulator::Op_Extension(const Instruction& instruction) {
     // This is a NOP in our design (at least for now)
+    assert(instruction.opcode == spv::Op::OpExtension);
 }
 
-void SPIRVSimulator::Op_MemoryModel(const Instruction&) {
+void SPIRVSimulator::Op_MemoryModel(const Instruction& instruction) {
     // This is a NOP in our design
+    assert(instruction.opcode == spv::Op::OpMemoryModel);
 }
 
-void SPIRVSimulator::Op_ExecutionMode(const Instruction&) {
+void SPIRVSimulator::Op_ExecutionMode(const Instruction& instruction) {
     // We may need this later
+    assert(instruction.opcode == spv::Op::OpExecutionMode);
 }
 
-void SPIRVSimulator::Op_Source(const Instruction&) {
+void SPIRVSimulator::Op_Source(const Instruction& instruction) {
     // This is a NOP in our design
+    assert(instruction.opcode == spv::Op::OpSource);
 }
 
-void SPIRVSimulator::Op_SourceExtension(const Instruction&) {
+void SPIRVSimulator::Op_SourceExtension(const Instruction& instruction) {
     // This is a NOP in our design
+    assert(instruction.opcode == spv::Op::OpSourceExtension);
 }
 
-void SPIRVSimulator::Op_Name(const Instruction&) {
+void SPIRVSimulator::Op_Name(const Instruction& instruction) {
     // We could use this for debug info later, for now we leave it as a NOP
+    assert(instruction.opcode == spv::Op::OpName);
 }
 
-void SPIRVSimulator::Op_MemberName(const Instruction&) {
+void SPIRVSimulator::Op_MemberName(const Instruction& instruction) {
     // We could use this for debug info later, for now we leave it as a NOP
+    assert(instruction.opcode == spv::Op::OpMemberName);
 }
 
 void SPIRVSimulator::Op_Decorate(const Instruction& instruction) {
@@ -2353,6 +2430,7 @@ void SPIRVSimulator::Op_Decorate(const Instruction& instruction) {
     This instruction is only valid if the Decoration operand is a decoration that takes no Extra Operands, or takes
     Extra Operands that are not <id> operands.
     */
+    assert(instruction.opcode == spv::Op::OpDecorate);
 
     uint32_t target_id = instruction.words[1];
     spv::Decoration kind = static_cast<spv::Decoration>(instruction.words[2]);
@@ -2376,6 +2454,8 @@ void SPIRVSimulator::Op_MemberDecorate(const Instruction& instruction) {
 
     Note: See OpDecorate for creating groups of decorations for consumption by OpGroupMemberDecorate
     */
+    assert(instruction.opcode == spv::Op::OpMemberDecorate);
+
     uint32_t structure_type_id = instruction.words[1];
     uint32_t member_literal = instruction.words[2];
     spv::Decoration kind = static_cast<spv::Decoration>(instruction.words[3]);
@@ -2400,6 +2480,8 @@ void SPIRVSimulator::Op_ArrayLength(const Instruction& instruction){
     Array member is an unsigned 32-bit integer index of the last member of the structure that Structure points to.
     That member’s type must be from OpTypeRuntimeArray.
     */
+    assert(instruction.opcode == spv::Op::OpArrayLength);
+
     //uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     //uint32_t structure_id = instruction.words[3];
@@ -2425,6 +2507,7 @@ void SPIRVSimulator::Op_SpecConstant(const Instruction& instruction) {
 
     See Specialization.
     */
+    assert(instruction.opcode == spv::Op::OpSpecConstant);
 
     uint32_t result_id = instruction.words[2];
     if (!HasDecorator(result_id, spv::Decoration::DecorationSpecId)){
@@ -2476,6 +2559,8 @@ void SPIRVSimulator::Op_SpecConstantOp(const Instruction& instruction) {
 
     See Specialization.
     */
+    assert(instruction.opcode == spv::Op::OpSpecConstantOp);
+
     uint32_t result_id = instruction.words[2];
 
     // TODO: Double check this after thoroughly reading the spec.
@@ -2524,6 +2609,7 @@ void SPIRVSimulator::Op_SpecConstantComposite(const Instruction& instruction) {
 
     See Specialization.
     */
+    assert(instruction.opcode == spv::Op::OpSpecConstantComposite);
     Op_ConstantComposite(instruction);
 }
 
@@ -2537,6 +2623,8 @@ void SPIRVSimulator::Op_UGreaterThanEqual(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpUGreaterThanEqual);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t operand1_id = instruction.words[3];
@@ -2600,6 +2688,7 @@ void SPIRVSimulator::Op_Phi(const Instruction& instruction){
     Within a block, this instruction must appear before all non-OpPhi instructions (except for OpLine and OpNoLine, which can
     be mixed with OpPhi).
     */
+    assert(instruction.opcode == spv::Op::OpPhi);
 
     //uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
@@ -2627,6 +2716,8 @@ void SPIRVSimulator::Op_ConvertUToF(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpConvertUToF);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t value_id = instruction.words[3];
@@ -2684,6 +2775,8 @@ void SPIRVSimulator::Op_ConvertSToF(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpConvertSToF);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t value_id = instruction.words[3];
@@ -2742,6 +2835,8 @@ void SPIRVSimulator::Op_FDiv(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpFDiv);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
@@ -2805,6 +2900,7 @@ void SPIRVSimulator::Op_FSub(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpFSub);
 
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
@@ -2869,6 +2965,8 @@ void SPIRVSimulator::Op_VectorTimesScalar(const Instruction& instruction){
 
     Scalar must have the same type as the Component Type in Result Type.
     */
+    assert(instruction.opcode == spv::Op::OpVectorTimesScalar);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t vector_id = instruction.words[3];
@@ -2917,6 +3015,8 @@ void SPIRVSimulator::Op_SLessThan(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpSLessThan);
+
     // No explicit requirement for ints to be signed? Assume they have to be for now (but detect if they aint)
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
@@ -2979,6 +3079,8 @@ void SPIRVSimulator::Op_Dot(const Instruction& instruction){
     Result Type must be a floating-point type scalar.
     Vector 1 and Vector 2 must be vectors of the same type, and their component type must be Result Type.
     */
+    assert(instruction.opcode == spv::Op::OpDot);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
@@ -3028,6 +3130,8 @@ void SPIRVSimulator::Op_FOrdGreaterThan(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpFOrdGreaterThan);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t operand1_id = instruction.words[3];
@@ -3082,6 +3186,8 @@ void SPIRVSimulator::Op_CompositeExtract(const Instruction& instruction){
     All indexes must be in bounds. All composite constituents use zero-based numbering, as described by their OpType…​ instruction.
     Each index is an unsigned 32-bit integer.
     */
+    assert(instruction.opcode == spv::Op::OpCompositeExtract);
+
     //uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t composite_id = instruction.words[3];
@@ -3158,6 +3264,8 @@ void SPIRVSimulator::Op_Bitcast(const Instruction& instruction){
     Within this mapping, any single component of S (mapping to multiple components of L) maps
     its lower-ordered bits to the lower-numbered components of L.
     */
+    assert(instruction.opcode == spv::Op::OpBitcast);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t operand_id = instruction.words[3];
@@ -3319,6 +3427,8 @@ void SPIRVSimulator::Op_IMul(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpIMul);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
@@ -3393,6 +3503,8 @@ void SPIRVSimulator::Op_ConvertUToPtr(const Instruction& instruction){
     Behavior is undefined if the storage class of Result Type does not match the one used by the operation
     that produced the value of Integer Value.
     */
+    assert(instruction.opcode == spv::Op::OpConvertUToPtr);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
     uint32_t integer_id = instruction.words[3];
@@ -3453,6 +3565,8 @@ void SPIRVSimulator::Op_UDiv(const Instruction& instruction){
 
     Results are computed per component. Behavior is undefined if Operand 2 is 0.
     */
+    assert(instruction.opcode == spv::Op::OpUDiv);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
@@ -3516,6 +3630,8 @@ void SPIRVSimulator::Op_UMod(const Instruction& instruction){
 
     Results are computed per component. Behavior is undefined if Operand 2 is 0.
     */
+    assert(instruction.opcode == spv::Op::OpUMod);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
@@ -3579,6 +3695,8 @@ void SPIRVSimulator::Op_ULessThan(const Instruction& instruction){
 
     Results are computed per component.
     */
+    assert(instruction.opcode == spv::Op::OpULessThan);
+
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 

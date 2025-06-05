@@ -65,7 +65,7 @@ The main framework is based around 3 structures:
 - Type:
 	- Describes the type details of a SPIRV value. All values have an associated Type.
 
-Instruction:
+- Instruction:
 	- Encapsulates a decoded instruction.
 ```
 
