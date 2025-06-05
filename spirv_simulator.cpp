@@ -1800,7 +1800,7 @@ void SPIRVSimulator::Op_AccessChain(const Instruction& instruction){
     - if indexing into a vector, array, or matrix, with the result type being a logical pointer type,
       causes undefined behavior if not in bounds.
     */
-    assert(instruction.opcode == spv::Op::OpAccessChain);
+    assert(instruction.opcode == spv::Op::OpAccessChain || instruction.opcode == spv::Op::OpInBoundsAccessChain);
 
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
