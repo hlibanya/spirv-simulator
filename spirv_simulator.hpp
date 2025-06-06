@@ -3,24 +3,16 @@
 #ifndef ARM_SPIRV_SIMULATOR_HPP
 #define ARM_SPIRV_SIMULATOR_HPP
 
-#include <algorithm>
-#include <array>
-#include <cassert>
-#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <functional>
-#include <iomanip>
 #include <iostream>
 #include <memory>
-#include <optional>
 #include <set>
 #include <span>
 #include <string>
-#include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <variant>
 #include <vector>
 

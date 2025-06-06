@@ -1,5 +1,14 @@
 #include "spirv_simulator.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cassert>
+#include <cmath>
+#include <iomanip>
+#include <optional>
+#include <string_view>
+#include <unordered_set>
+
 namespace SPIRVSimulator{
 
 constexpr uint32_t kWordCountShift = 16u;
@@ -78,7 +87,7 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpTypeSampledImage,       [this](const Instruction& i){T_SampledImage(i);});
     R(spv::Op::OpTypeOpaque,             [this](const Instruction& i){T_Opaque(i);});
     R(spv::Op::OpTypeNamedBarrier,       [this](const Instruction& i){T_NamedBarrier(i);});
-    R(spv::Op::OpEntryPoint,          [this](const Instruction& i){Op_EntryPoint(i);});
+    R(spv::Op::OpEntryPoint,             [this](const Instruction& i){Op_EntryPoint(i);});
     R(spv::Op::OpExtInstImport,          [this](const Instruction& i){Op_ExtInstImport(i);});
     R(spv::Op::OpConstant,               [this](const Instruction& i){Op_Constant(i);});
     R(spv::Op::OpConstantComposite,      [this](const Instruction& i){Op_ConstantComposite(i);});
@@ -197,9 +206,7 @@ void SPIRVSimulator::Validate(){
         }
     }
 
-    if (sizeof(void*) != 8){
-        throw std::runtime_error("SPIRV simulator: Systems with non 64 bit pointers are not supported");
-    }
+    static_assert(sizeof(void*) == 8, "SPIRV simulator: Systems with non 64 bit pointers are not supported");
 }
 
 void SPIRVSimulator::ParseAll(){
@@ -456,7 +463,7 @@ void SPIRVSimulator::PrintInstruction(const Instruction& instruction){
                 result_and_type << GetTypeString(types_.at(instruction.words[1])) << "(" << instruction.words[1] << ") ";
             }
         }
-            
+
         if (result_offset){
             result_and_type << instruction.words[result_offset] << " ";
         }
@@ -1383,7 +1390,7 @@ void SPIRVSimulator::T_Matrix(const Instruction& instruction){
         instruction.words[2],
         instruction.words[3]
     };
-    
+
     types_[result_id] = type;
 }
 
