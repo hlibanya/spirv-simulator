@@ -150,7 +150,7 @@ void SPIRVSimulator::CheckOpcodeSupport(){
     size_t current_word = 5;
 
     std::set<spv::Op> unimplemented_opcodes;
-    while(current_word < program_words_.size()){
+    while (current_word < program_words_.size()){
         uint32_t header_word = program_words_[current_word];
         uint32_t word_count = header_word >> kWordCountShift;
         spv::Op opcode = (spv::Op)(header_word & kOpcodeMask);
@@ -158,6 +158,13 @@ void SPIRVSimulator::CheckOpcodeSupport(){
         bool is_implemented = opcode_dispatchers_.find(opcode) != opcode_dispatchers_.end();
         if (!is_implemented){
             unimplemented_opcodes.insert(opcode);
+        }
+
+        if (opcode == spv::Op::OpExtInst){
+            uint32_t set_id = program_words_[current_word + 3];
+            uint32_t instruction_literal = program_words_[current_word + 4];
+
+            std::cout << execIndent << "Found OpExtInst instruction with set ID: " << set_id << ", instruction literal: " << instruction_literal << std::endl;
         }
 
         current_word += word_count;
@@ -181,7 +188,7 @@ void SPIRVSimulator::Validate(){
             throw std::runtime_error("SPIRV simulator: Matrix type detected, finish adding support for parsing these properly to continue");
         }
 
-        if(t.kind == Type::Kind::Array && !types_.contains(t.array.elem_type_id)){
+        if (t.kind == Type::Kind::Array && !types_.contains(t.array.elem_type_id)){
             throw std::runtime_error("SPIRV simulator: Missing  array elem type");
         } else if (t.kind == Type::Kind::Vector && !types_.contains(t.vector.elem_type_id)){
             throw std::runtime_error("SPIRV simulator: Missing vector elem type");
@@ -191,7 +198,7 @@ void SPIRVSimulator::Validate(){
             throw std::runtime_error("SPIRV simulator: Missing matrix col type");
         } else if(t.kind == Type::Kind::Pointer && !types_.contains(t.pointer.pointee_type_id)){
             throw std::runtime_error("SPIRV simulator: Missing pointee type");
-        } else if(t.kind == Type::Kind::Bool || t.kind == Type::Kind::Int || t.kind == Type::Kind::Float){
+        } else if(t.kind == Type::Kind::BoolT || t.kind == Type::Kind::Int || t.kind == Type::Kind::Float){
             if (t.scalar.width == 8 || t.scalar.width == 16){
                 std::cout << execIndent << "Scalar width is: " << t.scalar.width << ", this is untested but should work (if errors, suspect this and investigate)" << std::endl;
             }
@@ -218,7 +225,7 @@ void SPIRVSimulator::ParseAll(){
 
     bool in_function = false;
 
-    while(!stream_.empty()){
+    while (!stream_.empty()){
         Instruction instruction;
         DecodeInstruction(stream_, instruction);
         instructions_.push_back(instruction);
@@ -298,7 +305,7 @@ void SPIRVSimulator::Run(){
     // We can set the return value to whatever, ignored if the call stack is empty on return
     call_stack_.push_back({function_info.first_inst_index, 0, {}, {}});
 
-    while(!call_stack_.empty()){
+    while (!call_stack_.empty()){
         auto& stack_frame = call_stack_.back();
         const Instruction& instruction = instructions_[stack_frame.pc++];
 
@@ -409,7 +416,7 @@ std::string SPIRVSimulator::GetTypeString(const Type& type){
     if (type.kind == Type::Kind::Void){
         return "void";
     }
-    if (type.kind == Type::Kind::Bool){
+    if (type.kind == Type::Kind::BoolT){
         return "bool";
     }
     if (type.kind == Type::Kind::Int){
@@ -628,7 +635,7 @@ size_t SPIRVSimulator::GetBitizeOfType(uint32_t type_id){
     }
 
     size_t bitcount = 0;
-    if (type.kind == Type::Kind::Bool || type.kind == Type::Kind::Int || type.kind == Type::Kind::Float){
+    if (type.kind == Type::Kind::BoolT || type.kind == Type::Kind::Int || type.kind == Type::Kind::Float){
         bitcount += type.scalar.width;
     } else if (type.kind == Type::Kind::Vector){
         uint32_t elem_type_id = type.vector.elem_type_id;
@@ -703,7 +710,7 @@ void SPIRVSimulator::GetBaseTypeIDs(uint32_t type_id, std::vector<uint32_t>& out
         throw std::runtime_error("SPIRV simulator: Attempt to extract size of a void type");
     }
 
-    if (type.kind == Type::Kind::Bool || type.kind == Type::Kind::Int || type.kind == Type::Kind::Float || type.kind == Type::Kind::Pointer){
+    if (type.kind == Type::Kind::BoolT || type.kind == Type::Kind::Int || type.kind == Type::Kind::Float || type.kind == Type::Kind::Pointer){
         output.push_back(type_id);
     } else if (type.kind == Type::Kind::Vector){
         uint32_t elem_type_id = type.vector.elem_type_id;
@@ -897,7 +904,7 @@ Value SPIRVSimulator::MakeScalar(uint32_t type_id, const uint32_t*& words){
                 }
             }
         }
-        case Type::Kind::Bool:{
+        case Type::Kind::BoolT:{
             // Just treat bools as uint64_t types for simplicity
             if (type.scalar.width > 32){
                 throw std::runtime_error("SPIRV simulator: Bool value with more than 32 bits detected, this is not handled at present");
@@ -934,7 +941,7 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id, const uint32_t** initial_dat
     switch(type.kind){
         case Type::Kind::Int:
         case Type::Kind::Float:
-        case Type::Kind::Bool:{
+        case Type::Kind::BoolT:{
             if (initial_data != nullptr){
                 return MakeScalar(type_id, *initial_data);
             } else {
@@ -1157,7 +1164,6 @@ std::vector<DataSourceBits> SPIRVSimulator::FindDataSourcesFromResultID(uint32_t
             data_source.idx = 0;
             data_source.binding_id = 0;
             data_source.set_id = 0;
-            uint32_t instruction_index = result_id_to_inst_index_.at(result_id);
             uint32_t header_word_count = 5;
             data_source.byte_offset = (instruction_index + header_word_count) * sizeof(uint32_t);
             data_source.bit_offset = 0;
@@ -1320,7 +1326,7 @@ void SPIRVSimulator::T_Bool(const Instruction& instruction){
     uint32_t result_id = instruction.words[1];
 
     Type type;
-    type.kind = Type::Kind::Bool;
+    type.kind = Type::Kind::BoolT;
     type.scalar = {
         64,
         false
@@ -2309,7 +2315,7 @@ void SPIRVSimulator::Op_INotEqual(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
-    } else if (type.kind == Type::Kind::Bool){
+    } else if (type.kind == Type::Kind::BoolT){
         Value result;
         const Value& op1 = GetValue(instruction.words[3]);
         const Value& op2 = GetValue(instruction.words[4]);
@@ -2457,7 +2463,7 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
-    } else if (type.kind == Type::Kind::Bool){
+    } else if (type.kind == Type::Kind::BoolT){
         Value result;
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
@@ -2761,7 +2767,7 @@ void SPIRVSimulator::Op_UGreaterThanEqual(const Instruction& instruction){
 
         SetValue(result_id, result);
 
-    } else if (type.kind == Type::Kind::Bool){
+    } else if (type.kind == Type::Kind::BoolT){
         Value result = (uint64_t)(std::get<uint64_t>(val_op1) >= std::get<uint64_t>(val_op2));
         SetValue(result_id, result);
     } else {
@@ -3155,7 +3161,7 @@ void SPIRVSimulator::Op_SLessThan(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
-    } else if (type.kind == Type::Kind::Bool){
+    } else if (type.kind == Type::Kind::BoolT){
         const Value& op1 = GetValue(instruction.words[3]);
         const Value& op2 = GetValue(instruction.words[4]);
 
@@ -3267,7 +3273,7 @@ void SPIRVSimulator::Op_FOrdGreaterThan(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
-    } else if (type.kind == Type::Kind::Bool){
+    } else if (type.kind == Type::Kind::BoolT){
         Value result = (uint64_t)(std::get<double>(val_op1) > std::get<double>(val_op2));
         SetValue(result_id, result);
     } else {
@@ -3834,7 +3840,7 @@ void SPIRVSimulator::Op_ULessThan(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
-    } else if (type.kind == Type::Kind::Bool){
+    } else if (type.kind == Type::Kind::BoolT){
         const Value& op1 = GetValue(instruction.words[3]);
         const Value& op2 = GetValue(instruction.words[4]);
 

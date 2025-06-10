@@ -131,7 +131,7 @@ struct Instruction{
 struct Type{
     enum class Kind{
         Void,
-        Bool,
+        BoolT,  // Because x11 headers have a macro called Bool
         Int,
         Float,
         Vector,
