@@ -63,7 +63,7 @@ struct InputData{
 
     // These can be provided by the user in order to properly initialize PhysicalStorageBuffer storage class values.
     // The keys here are uint64_t values who contain the bits in the physical address pointers
-    // The vector holds the actual data in the buffer
+    // The value pair is the size of the buffer (in bytes) followed by the pointer to the host side data
     std::unordered_map<uint64_t, std::pair<size_t, void*>> physical_address_buffers;
 };
 
