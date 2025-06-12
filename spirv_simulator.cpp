@@ -1006,7 +1006,7 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id, const uint32_t** initial_dat
                 uint64_t pointer_value = 0;
 
                 if (initial_data){
-                    std::memcpy(&pointer_value, static_cast<const std::byte*>(initial_data), sizeof(uint64_t));
+                    std::memcpy(&pointer_value, reinterpret_cast<const std::byte*>(*initial_data), sizeof(uint64_t));
                 } else {
                     if (verbose_){
                         std::cout << execIndent << "A pointer with StorageClassPhysicalStorageBuffer was default initialized without input buffer data available. The actual pointer address will be unknown (null)" << std::endl;
@@ -1605,10 +1605,11 @@ void SPIRVSimulator::Op_Constant(const Instruction& instruction){
 
     if (HasDecorator(result_id, spv::Decoration::DecorationSpecId)){
         uint32_t spec_id = GetDecoratorLiteral(result_id, spv::Decoration::DecorationSpecId);
-        if (input_data_.specialization_constants.find(spec_id) != input_data_.specialization_constants.end()){
-            const std::vector<std::byte>& raw_spec_const_data = input_data_.specialization_constants.at(spec_id);
+        if (input_data_.specialization_constant_offsets.find(spec_id) != input_data_.specialization_constant_offsets.end()){
+            size_t spec_id_offset = input_data_.specialization_constant_offsets.at(spec_id);
+            const std::byte* raw_spec_const_data = static_cast<std::byte*>(input_data_.specialization_constants) + spec_id_offset;
             std::vector<uint32_t> buffer_data;
-            ExtractWords(raw_spec_const_data.data(), type_id, buffer_data);
+            ExtractWords(raw_spec_const_data, type_id, buffer_data);
 
             const uint32_t* buffer_pointer = buffer_data.data();
             SetValue(result_id, MakeScalar(type_id, buffer_pointer));
@@ -1779,7 +1780,7 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
 
         if (input_data_.bindings.find(descriptor_set) != input_data_.bindings.end()){
             if (input_data_.bindings.at(descriptor_set).find(binding) != input_data_.bindings.at(descriptor_set).end()){
-                external_pointer = static_cast<std::byte*>(input_data_.bindings.at(descriptor_set).at(binding).data());
+                external_pointer = static_cast<std::byte*>(input_data_.bindings.at(descriptor_set).at(binding));
             }
         }
 
