@@ -43,22 +43,28 @@ namespace SPIRVSimulator {
 
 struct InputData{
     // The SpirV ID of the entry point to use
-    // TODO: This might not be very user friendly, consider using name labels instead (should pretty much always work)
     uint32_t entry_point_id = 0;
+    // The label (function name) of the entry point to use, takes priority over entry_point_id if it is set.
+    std::string entry_point_label;
 
-    // SpecId -> data
-    std::unordered_map<uint32_t, std::vector<std::byte>> specialization_constants;
+    // Data block pointer -> (byte_offset_to_array, array length)
+    std::unordered_map<uint64_t, std::pair<size_t, size_t>> rt_array_lengths;
+
+    // SpecId -> byte offset
+    std::unordered_map<uint32_t, size_t> specialization_constant_offsets;
+    void* specialization_constants;
+
 
     // The full binary push_constant block
-    std::vector<std::byte> push_constants;
+    void* push_constants;
 
     // DescriptorSet -> Binding -> data
-    std::unordered_map<uint64_t, std::unordered_map<uint64_t, std::vector<std::byte>>> bindings;
+    std::unordered_map<uint64_t, std::unordered_map<uint64_t, void*>> bindings;
 
     // These can be provided by the user in order to properly initialize PhysicalStorageBuffer storage class values.
     // The keys here are uint64_t values who contain the bits in the physical address pointers
     // The vector holds the actual data in the buffer
-    std::unordered_map<uint64_t, std::vector<std::byte>> physical_address_buffers;
+    std::unordered_map<uint64_t, std::pair<size_t, void*>> physical_address_buffers;
 };
 
 // ---------------------------------------------------------------------------

@@ -8,4 +8,4 @@ set(SOURCE_FILES main.cpp spirv_simulator.cpp)
 set(HEADER_FILES spirv_simulator.hpp spirv.hpp)
 
 add_executable(spirv_simulator ${SOURCE_FILES} ${HEADER_FILES})
-target_compile_options(spirv_simulator PRIVATE -Wall -Wextra -Wpedantic -std=c++20)
+target_compile_options(spirv_simulator PRIVATE -Wall -Wextra -Wpedantic -Wshadow -std=c++20)

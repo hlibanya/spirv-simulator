@@ -1006,7 +1006,7 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id, const uint32_t** initial_dat
                 uint64_t pointer_value = 0;
 
                 if (initial_data){
-                    std::memcpy(&pointer_value, reinterpret_cast<const std::byte*>(initial_data), sizeof(uint64_t));
+                    std::memcpy(&pointer_value, static_cast<const std::byte*>(initial_data), sizeof(uint64_t));
                 } else {
                     if (verbose_){
                         std::cout << execIndent << "A pointer with StorageClassPhysicalStorageBuffer was default initialized without input buffer data available. The actual pointer address will be unknown (null)" << std::endl;
@@ -1021,10 +1021,12 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id, const uint32_t** initial_dat
 
                 for (const auto& map_entry : input_data_.physical_address_buffers){
                     uint64_t buffer_address = map_entry.first;
-                    size_t buffer_size = map_entry.second.size();
+                    size_t buffer_size = map_entry.second.first;
+
+                    const std::byte* buffer_data = static_cast<std::byte*>(map_entry.second.second);
 
                     if ((pointer_value >= buffer_address) && (pointer_value < (buffer_address + buffer_size))){
-                        remapped_pointer = &(map_entry.second[buffer_address - pointer_value]);
+                        remapped_pointer = &(buffer_data[buffer_address - pointer_value]);
                         break;
                     }
                 }
@@ -1746,8 +1748,8 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
     PointerV new_pointer{result_id, type_id, storage_class, 0, {}, {}};
 
     if (type.pointer.storage_class == spv::StorageClass::StorageClassPushConstant){
-        const std::byte* external_pointer = input_data_.push_constants.data();
-        if (!input_data_.push_constants.size()){
+        const std::byte* external_pointer = static_cast<std::byte*>(input_data_.push_constants);
+        if (!input_data_.push_constants){
             if (verbose_){
                 std::cout << execIndent << "No push constant initialization data mapped in the inputs, setting to defaults, this may crash" << std::endl;
             }
@@ -1777,7 +1779,7 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction){
 
         if (input_data_.bindings.find(descriptor_set) != input_data_.bindings.end()){
             if (input_data_.bindings.at(descriptor_set).find(binding) != input_data_.bindings.at(descriptor_set).end()){
-                external_pointer = input_data_.bindings.at(descriptor_set).at(binding).data();
+                external_pointer = static_cast<std::byte*>(input_data_.bindings.at(descriptor_set).at(binding).data());
             }
         }
 
@@ -3482,10 +3484,12 @@ void SPIRVSimulator::Op_Bitcast(const Instruction& instruction){
 
         for (const auto& map_entry : input_data_.physical_address_buffers){
             uint64_t buffer_address = map_entry.first;
-            size_t buffer_size = map_entry.second.size();
+            size_t buffer_size = map_entry.second.first;
+
+            const std::byte* buffer_data = static_cast<std::byte*>(map_entry.second.second);
 
             if ((pointer_value >= buffer_address) && (pointer_value < (buffer_address + buffer_size))){
-                remapped_pointer = &(map_entry.second[buffer_address - pointer_value]);
+                remapped_pointer = &(buffer_data[buffer_address - pointer_value]);
                 break;
             }
         }
@@ -3630,10 +3634,12 @@ void SPIRVSimulator::Op_ConvertUToPtr(const Instruction& instruction){
 
     for (const auto& map_entry : input_data_.physical_address_buffers){
         uint64_t buffer_address = map_entry.first;
-        size_t buffer_size = map_entry.second.size();
+        size_t buffer_size = map_entry.second.first;
+
+        const std::byte* buffer_data = static_cast<std::byte*>(map_entry.second.second);
 
         if ((pointer_value >= buffer_address) && (pointer_value < (buffer_address + buffer_size))){
-            remapped_pointer = &(map_entry.second[buffer_address - pointer_value]);
+            remapped_pointer = &(buffer_data[buffer_address - pointer_value]);
             break;
         }
     }
