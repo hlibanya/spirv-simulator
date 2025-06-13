@@ -439,6 +439,20 @@ private:
     void Op_AtomicISub(const Instruction&);
     void Op_Select(const Instruction&);
     void Op_IEqual(const Instruction&);
+    void Op_ImageTexelPointer(const Instruction&);
+    void Op_VectorShuffle(const Instruction&);
+    void Op_CompositeInsert(const Instruction&);
+    void Op_Transpose(const Instruction&);
+    void Op_ImageFetch(const Instruction&);
+    void Op_FNegate(const Instruction&);
+    void Op_MatrixTimesVector(const Instruction&);
+    void Op_UGreaterThan(const Instruction&);
+    void Op_FOrdLessThan(const Instruction&);
+    void Op_ShiftRightLogical(const Instruction&);
+    void Op_ShiftLeftLogical(const Instruction&);
+    void Op_BitwiseOr(const Instruction&);
+    void Op_BitwiseAnd(const Instruction&);
+    void Op_Switch(const Instruction&);
 };
 
 }

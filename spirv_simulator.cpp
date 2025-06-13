@@ -149,6 +149,20 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpAtomicISub,             [this](const Instruction& i){Op_AtomicISub(i);});
     R(spv::Op::OpSelect,                 [this](const Instruction& i){Op_Select(i);});
     R(spv::Op::OpIEqual,                 [this](const Instruction& i){Op_IEqual(i);});
+    R(spv::Op::OpImageTexelPointer,      [this](const Instruction& i){Op_ImageTexelPointer(i);});
+    R(spv::Op::OpVectorShuffle,          [this](const Instruction& i){Op_VectorShuffle(i);});
+    R(spv::Op::OpCompositeInsert,        [this](const Instruction& i){Op_CompositeInsert(i);});
+    R(spv::Op::OpTranspose,              [this](const Instruction& i){Op_Transpose(i);});
+    R(spv::Op::OpImageFetch,             [this](const Instruction& i){Op_ImageFetch(i);});
+    R(spv::Op::OpFNegate,                [this](const Instruction& i){Op_FNegate(i);});
+    R(spv::Op::OpMatrixTimesVector,      [this](const Instruction& i){Op_MatrixTimesVector(i);});
+    R(spv::Op::OpUGreaterThan,           [this](const Instruction& i){Op_UGreaterThan(i);});
+    R(spv::Op::OpFOrdLessThan,           [this](const Instruction& i){Op_FOrdLessThan(i);});
+    R(spv::Op::OpShiftRightLogical,      [this](const Instruction& i){Op_ShiftRightLogical(i);});
+    R(spv::Op::OpShiftLeftLogical,       [this](const Instruction& i){Op_ShiftLeftLogical(i);});
+    R(spv::Op::OpBitwiseOr,              [this](const Instruction& i){Op_BitwiseOr(i);});
+    R(spv::Op::OpBitwiseAnd,             [this](const Instruction& i){Op_BitwiseAnd(i);});
+    R(spv::Op::OpSwitch,                 [this](const Instruction& i){Op_Switch(i);});
 }
 
 void SPIRVSimulator::CheckOpcodeSupport(){
@@ -3749,7 +3763,7 @@ void SPIRVSimulator::Op_ConstantTrue(const Instruction& instruction){
     Declare a true Boolean-type scalar constant.
     Result Type must be the scalar Boolean type.
     */
-    assert(instruction.opcode == spv::Op::OpConstant || instruction.opcode == spv::Op::OpSpecConstant);
+    assert(instruction.opcode == spv::Op::OpConstantTrue);
 
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
@@ -3767,7 +3781,7 @@ void SPIRVSimulator::Op_ConstantFalse(const Instruction& instruction){
     Declare a false Boolean-type scalar constant.
     Result Type must be the scalar Boolean type.
     */
-    assert(instruction.opcode == spv::Op::OpConstant || instruction.opcode == spv::Op::OpSpecConstant);
+    assert(instruction.opcode == spv::Op::OpConstantFalse);
 
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
@@ -3810,7 +3824,7 @@ void SPIRVSimulator::Op_ConstantNull(const Instruction& instruction){
     const Type& type = types_.at(type_id);
 
     // TODO: This will crash for most pointers, we have to handle that case without MakeDefault
-    assertm (type.kind != Type::Kind::Pointer, "SPIRV simulator: Op_ConstantNull for pointer types is currently not supported")
+    assertm (type.kind != Type::Kind::Pointer, "SPIRV simulator: Op_ConstantNull for pointer types is currently not supported");
 
     SetValue(result_id, MakeDefault(type_id));
 }
@@ -4033,6 +4047,125 @@ void SPIRVSimulator::Op_IEqual(const Instruction& instruction){
     } else {
         assertx ("SPIRV simulator: Invalid result type int Op_IEqual, must be vector or int");
     }
+}
+
+void SPIRVSimulator::Op_ImageTexelPointer(const Instruction& instruction){
+    /*
+    OpImageTexelPointer
+
+    Form a pointer to a texel of an image. Use of such a pointer is limited to atomic operations.
+    Result Type must be an OpTypePointer whose Storage Class operand is Image.
+    Its Type operand must be a scalar numerical type or OpTypeVoid.
+
+    Image must have a type of OpTypePointer with Type OpTypeImage.
+    The Sampled Type of the type of Image must be the same as the Type pointed to by Result Type. The Dim operand of Type must not be SubpassData.
+
+    Coordinate and Sample specify which texel and sample within the image to form a pointer to.
+
+    Coordinate must be a scalar or vector of integer type. It must have the number of components specified below,
+    given the following Arrayed and Dim operands of the type of the OpTypeImage.
+
+    If Arrayed is 0:
+    1D: scalar
+    2D: 2 components
+    3D: 3 components
+    Cube: 3 components
+    Rect: 2 components
+    Buffer: scalar
+
+    If Arrayed is 1:
+    1D: 2 components
+    2D: 3 components
+    Cube: 3 components; the face and layer combine into the 3rd component, layer_face,
+    such that face is layer_face % 6 and layer is floor(layer_face / 6)
+
+    Sample must be an integer type scalar. It specifies which sample to select at the given coordinate.
+    Behavior is undefined unless it is a valid <id> for the value 0 when the OpTypeImage has MS of 0.
+    */
+    assert(instruction.opcode == spv::Op::OpImageTexelPointer);
+    assertx ("SPIRV simulator: Op_ImageTexelPointer is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction){
+    /*
+    OpVectorShuffle
+
+    Select arbitrary components from two vectors to make a new vector.
+
+    Result Type must be an OpTypeVector.
+    The number of components in Result Type must be the same as the number of Component operands.
+
+    Vector 1 and Vector 2 must both have vector types, with the same Component Type as Result Type.
+    They do not have to have the same number of components as Result Type or with each other. They are logically concatenated, forming a single vector with Vector 1’s components appearing before Vector 2’s. The components of this logical vector are logically numbered with a single consecutive set of numbers from 0 to N - 1, where N is the total number of components.
+
+    Components are these logical numbers (see above), selecting which of the logically numbered components form the result.
+    Each component is an unsigned 32-bit integer. They can select the components in any order and can repeat components. The first component of the result is selected by the first Component operand, the second component of the result is selected by the second Component operand, etc. A Component literal may also be FFFFFFFF, which means the corresponding result component has no source and is undefined. All Component literals must either be FFFFFFFF or in [0, N - 1] (inclusive).
+
+    Note: A vector “swizzle” can be done by using the vector for both Vector operands, or
+    using an OpUndef for one of the Vector operands.
+    */
+    assert(instruction.opcode == spv::Op::OpVectorShuffle);
+    assertx ("SPIRV simulator: Op_VectorShuffle is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_CompositeInsert(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpCompositeInsert);
+    assertx ("SPIRV simulator: Op_CompositeInsert is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_Transpose(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpTranspose);
+    assertx ("SPIRV simulator: Op_Transpose is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_ImageFetch(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpImageFetch);
+    assertx ("SPIRV simulator: Op_ImageFetch is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_FNegate(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpFNegate);
+    assertx ("SPIRV simulator: Op_FNegate is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_MatrixTimesVector(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpMatrixTimesVector);
+    assertx ("SPIRV simulator: Op_MatrixTimesVector is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_UGreaterThan(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpUGreaterThan);
+    assertx ("SPIRV simulator: Op_UGreaterThan is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_FOrdLessThan(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpFOrdLessThan);
+    assertx ("SPIRV simulator: Op_FOrdLessThan is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_ShiftRightLogical(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpShiftRightLogical);
+    assertx ("SPIRV simulator: Op_ShiftRightLogical is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_ShiftLeftLogical(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpShiftLeftLogical);
+    assertx ("SPIRV simulator: Op_ShiftLeftLogical is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_BitwiseOr(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpBitwiseOr);
+    assertx ("SPIRV simulator: Op_BitwiseOr is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_BitwiseAnd(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpBitwiseAnd);
+    assertx ("SPIRV simulator: Op_BitwiseAnd is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_Switch(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpSwitch);
+    assertx ("SPIRV simulator: Op_Switch is currently unimplemented");
 }
 
 #undef assertx
