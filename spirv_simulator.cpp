@@ -3807,6 +3807,11 @@ void SPIRVSimulator::Op_ConstantNull(const Instruction& instruction){
 
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
+    const Type& type = types_.at(type_id);
+
+    // TODO: This will crash for most pointers, we have to handle that case without MakeDefault
+    assertm (type.kind != Type::Kind::Pointer, "SPIRV simulator: Op_ConstantNull for pointer types is currently not supported")
+
     SetValue(result_id, MakeDefault(type_id));
 }
 
@@ -3823,7 +3828,8 @@ void SPIRVSimulator::Op_AtomicIAdd(const Instruction& instruction){
 
     Result Type must be an integer type scalar.
 
-    The type of Value must be the same as Result Type. The type of the value pointed to by Pointer must be the same as Result Type.
+    The type of Value must be the same as Result Type.
+    The type of the value pointed to by Pointer must be the same as Result Type.
 
     Memory is a memory Scope.
     */
@@ -3863,7 +3869,8 @@ void SPIRVSimulator::Op_AtomicISub(const Instruction& instruction){
 
     Result Type must be an integer type scalar.
 
-    The type of Value must be the same as Result Type. The type of the value pointed to by Pointer must be the same as Result Type.
+    The type of Value must be the same as Result Type.
+    The type of the value pointed to by Pointer must be the same as Result Type.
 
     Memory is a memory Scope.
     */
@@ -3961,7 +3968,8 @@ void SPIRVSimulator::Op_IEqual(const Instruction& instruction){
 
     Integer comparison for equality.
     Result Type must be a scalar or vector of Boolean type.
-    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type. They must have the same component width, and they must have the same number of components as Result Type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type.
+    They must have the same component width, and they must have the same number of components as Result Type.
     Results are computed per component.
     */
     assert(instruction.opcode == spv::Op::OpIEqual);
