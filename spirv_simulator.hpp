@@ -52,11 +52,10 @@ struct InputData{
 
     // SpecId -> byte offset
     std::unordered_map<uint32_t, size_t> specialization_constant_offsets;
-    void* specialization_constants;
-
+    void* specialization_constants = nullptr;
 
     // The full binary push_constant block
-    void* push_constants;
+    void* push_constants = nullptr;
 
     // DescriptorSet -> Binding -> data
     std::unordered_map<uint64_t, std::unordered_map<uint64_t, void*>> bindings;
