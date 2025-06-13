@@ -355,9 +355,10 @@ private:
     uint32_t GetDecoratorLiteral(uint32_t result_id, uint32_t member_id, spv::Decoration decorator, size_t literal_offset=0);
     uint32_t GetNextExternalID(){uint32_t new_id = next_external_id_; next_external_id_ += 1; return new_id;}
     bool ValueIsArbitrary(uint32_t result_id) const {return arbitrary_values_.contains(result_id);};
+    Value CopyValue(const Value& value) const;
     std::unordered_map<uint32_t,Value>& Heap(uint32_t sc){ return heaps_[sc]; }
 
-    // Opcode handlers, 67/498 implemented for SPIRV 1.6
+    // Opcode handlers, 95/498 implemented for SPIRV 1.6
     void T_Void(const Instruction&);
     void T_Bool(const Instruction&);
     void T_Int(const Instruction&);

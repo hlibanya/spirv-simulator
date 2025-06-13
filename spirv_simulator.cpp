@@ -1148,6 +1148,42 @@ std::vector<DataSourceBits> SPIRVSimulator::FindDataSourcesFromResultID(uint32_t
     return results;
 }
 
+Value SPIRVSimulator::CopyValue(const Value& value) const{
+    /*
+    Creates a copy of a Value object, will recursively copy all pointers
+    and components.
+    */
+
+    if (std::holds_alternative<std::shared_ptr<VectorV>>(value)){
+        std::shared_ptr<VectorV> new_vector = std::make_shared<VectorV>();
+
+        for (const auto& elem : std::get<std::shared_ptr<VectorV>>(value)->elems){
+            new_vector->elems.push_back(CopyValue(elem));
+        }
+
+        return new_vector;
+    } else if (std::holds_alternative<std::shared_ptr<MatrixV>>(value)){
+        std::shared_ptr<MatrixV> new_matrix = std::make_shared<MatrixV>();
+
+        for (const auto& col : std::get<std::shared_ptr<MatrixV>>(value)->cols){
+            new_matrix->cols.push_back(CopyValue(col));
+        }
+
+        return new_matrix;
+
+    } else if (std::holds_alternative<std::shared_ptr<AggregateV>>(value)){
+        std::shared_ptr<AggregateV> new_aggregate = std::make_shared<AggregateV>();
+
+        for (const auto& elem : std::get<std::shared_ptr<AggregateV>>(value)->elems){
+            new_aggregate->elems.push_back(CopyValue(elem));
+        }
+
+        return new_aggregate;
+    }
+
+    return value;
+}
+
 // ---------------------------------------------------------------------------
 //  Dereference and access helpers
 // ---------------------------------------------------------------------------
@@ -4109,13 +4145,107 @@ void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction){
 }
 
 void SPIRVSimulator::Op_CompositeInsert(const Instruction& instruction){
+    /*
+    OpCompositeInsert
+
+    Make a copy of a composite object, while modifying one part of it.
+    Result Type must be the same type as Composite.
+
+    Object is the object to use as the modified part.
+    Composite is the composite to copy all but the modified part from.
+    Indexes walk the type hierarchy of Composite to the desired depth, potentially down to component granularity,
+    to select the part to modify. All indexes must be in bounds. All composite constituents use zero-based numbering,
+    as described by their OpType…​ instruction.
+    The type of the part selected to modify must match the type of Object. Each index is an unsigned 32-bit integer.
+    */
     assert(instruction.opcode == spv::Op::OpCompositeInsert);
-    assertx ("SPIRV simulator: Op_CompositeInsert is currently unimplemented");
+
+    uint32_t result_id = instruction.words[2];
+    uint32_t obj_id = instruction.words[3];
+    uint32_t composite_id = instruction.words[4];
+
+    const Value& source_composite = GetValue(composite_id);
+    Value composite_copy = CopyValue(source_composite);
+
+    Value* current_composite = &composite_copy;
+    for (uint32_t i = 5; i < instruction.word_count; ++i){
+        uint32_t literal_index = instruction.words[i];
+
+        if(std::holds_alternative<std::shared_ptr<AggregateV>>(*current_composite)){
+            auto agg = std::get<std::shared_ptr<AggregateV>>(*current_composite);
+
+            assertm (literal_index < agg->elems.size(), "SPIRV simulator: Aggregate index OOB");
+
+            current_composite = &agg->elems[literal_index];
+        } else if (std::holds_alternative<std::shared_ptr<VectorV>>(*current_composite)){
+            auto vec = std::get<std::shared_ptr<VectorV>>(*current_composite);
+
+            assertm (literal_index < vec->elems.size(), "SPIRV simulator: Vector index OOB");
+
+            current_composite = &vec->elems[literal_index];
+        } else if (std::holds_alternative<std::shared_ptr<MatrixV>>(*current_composite)){
+            auto matrix = std::get<std::shared_ptr<MatrixV>>(*current_composite);
+
+            assertm (literal_index < matrix->cols.size(), "SPIRV simulator: Matrix index OOB");
+
+            current_composite = &matrix->cols[literal_index];
+        }
+        else{
+            assertx ("SPIRV simulator: Pointer dereference into non-composite object");
+        }
+    }
+
+    const Value& source_object = GetValue(obj_id);
+    *current_composite = CopyValue(source_object);
+    SetValue(result_id, composite_copy);
 }
 
 void SPIRVSimulator::Op_Transpose(const Instruction& instruction){
+    /*
+
+    OpTranspose
+
+    Transpose a matrix.
+    Result Type must be an OpTypeMatrix.
+    Matrix must be an object of type OpTypeMatrix. The number of columns and the column size of Matrix must be the
+    reverse of those in Result Type. The types of the scalar components in Matrix and Result Type must be the same.
+
+    Matrix must have of type of OpTypeMatrix.
+    */
     assert(instruction.opcode == spv::Op::OpTranspose);
-    assertx ("SPIRV simulator: Op_Transpose is currently unimplemented");
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t matrix_id = instruction.words[3];
+    const Type& type = types_.at(type_id);
+
+    assertm (type.kind == Type::Kind::Matrix, "SPIRV simulator: Non-matrix type given to Op_Transpose");
+    assertm (type.matrix.col_count > 0, "SPIRV simulator: Matrix type with no columns encountered");
+
+    const Type& col_type = types_.at(type.matrix.col_type_id);
+    assertm (col_type.kind == Type::Kind::Vector, "SPIRV simulator: Non-vector column type in matrix type given to Op_Transpose");
+    assertm (col_type.vector.elem_count > 0, "SPIRV simulator: Vector type with no elements encountered");
+
+    Value source_matrix_value = GetValue(matrix_id);
+    assertm (std::holds_alternative<std::shared_ptr<MatrixV>>(source_matrix_value), "SPIRV simulator: Simulator value does not hold a MatrixV shared pointer in Op_Transpose");
+
+    std::shared_ptr<MatrixV> new_matrix = std::make_shared<MatrixV>();
+    std::shared_ptr<MatrixV> source_matrix = std::get<std::shared_ptr<MatrixV>>(source_matrix_value);
+    assertm (source_matrix->cols.size() == col_type.vector.elem_count, "SPIRV simulator: Column vs row mismatch in Op_Transpose");
+
+    for (uint64_t target_column = 0; target_column < type.matrix.col_count; ++target_column){
+        std::shared_ptr<VectorV> new_column = std::make_shared<VectorV>();
+
+        for (uint64_t source_row = 0; source_row < type.matrix.col_count; ++source_row){
+            for (uint64_t source_column = 0; source_column < col_type.vector.elem_count; ++source_column){
+                new_column->elems.push_back(CopyValue(std::get<std::shared_ptr<VectorV>>(source_matrix->cols[source_column])->elems[source_row]));
+            }
+        }
+
+        new_matrix->cols.push_back(new_column);
+    }
+
+    SetValue(result_id, new_matrix);
 }
 
 void SPIRVSimulator::Op_ImageFetch(const Instruction& instruction){
