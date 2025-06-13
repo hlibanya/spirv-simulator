@@ -158,6 +158,7 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpMatrixTimesVector,      [this](const Instruction& i){Op_MatrixTimesVector(i);});
     R(spv::Op::OpUGreaterThan,           [this](const Instruction& i){Op_UGreaterThan(i);});
     R(spv::Op::OpFOrdLessThan,           [this](const Instruction& i){Op_FOrdLessThan(i);});
+    R(spv::Op::OpFOrdLessThanEqual,      [this](const Instruction& i){Op_FOrdLessThanEqual(i);});
     R(spv::Op::OpShiftRightLogical,      [this](const Instruction& i){Op_ShiftRightLogical(i);});
     R(spv::Op::OpShiftLeftLogical,       [this](const Instruction& i){Op_ShiftLeftLogical(i);});
     R(spv::Op::OpBitwiseOr,              [this](const Instruction& i){Op_BitwiseOr(i);});
@@ -3247,7 +3248,7 @@ void SPIRVSimulator::Op_FOrdGreaterThan(const Instruction& instruction){
         Value result = (uint64_t)(std::get<double>(val_op1) > std::get<double>(val_op2));
         SetValue(result_id, result);
     } else {
-        assertx ("SPIRV simulator: Invalid result type int Op_FOrdGreaterThan, must be vector or float");
+        assertx ("SPIRV simulator: Invalid result type in Op_FOrdGreaterThan, must be vector or float");
     }
 }
 
@@ -4085,65 +4086,6 @@ void SPIRVSimulator::Op_IEqual(const Instruction& instruction){
     }
 }
 
-void SPIRVSimulator::Op_ImageTexelPointer(const Instruction& instruction){
-    /*
-    OpImageTexelPointer
-
-    Form a pointer to a texel of an image. Use of such a pointer is limited to atomic operations.
-    Result Type must be an OpTypePointer whose Storage Class operand is Image.
-    Its Type operand must be a scalar numerical type or OpTypeVoid.
-
-    Image must have a type of OpTypePointer with Type OpTypeImage.
-    The Sampled Type of the type of Image must be the same as the Type pointed to by Result Type. The Dim operand of Type must not be SubpassData.
-
-    Coordinate and Sample specify which texel and sample within the image to form a pointer to.
-
-    Coordinate must be a scalar or vector of integer type. It must have the number of components specified below,
-    given the following Arrayed and Dim operands of the type of the OpTypeImage.
-
-    If Arrayed is 0:
-    1D: scalar
-    2D: 2 components
-    3D: 3 components
-    Cube: 3 components
-    Rect: 2 components
-    Buffer: scalar
-
-    If Arrayed is 1:
-    1D: 2 components
-    2D: 3 components
-    Cube: 3 components; the face and layer combine into the 3rd component, layer_face,
-    such that face is layer_face % 6 and layer is floor(layer_face / 6)
-
-    Sample must be an integer type scalar. It specifies which sample to select at the given coordinate.
-    Behavior is undefined unless it is a valid <id> for the value 0 when the OpTypeImage has MS of 0.
-    */
-    assert(instruction.opcode == spv::Op::OpImageTexelPointer);
-    assertx ("SPIRV simulator: Op_ImageTexelPointer is currently unimplemented");
-}
-
-void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction){
-    /*
-    OpVectorShuffle
-
-    Select arbitrary components from two vectors to make a new vector.
-
-    Result Type must be an OpTypeVector.
-    The number of components in Result Type must be the same as the number of Component operands.
-
-    Vector 1 and Vector 2 must both have vector types, with the same Component Type as Result Type.
-    They do not have to have the same number of components as Result Type or with each other. They are logically concatenated, forming a single vector with Vector 1’s components appearing before Vector 2’s. The components of this logical vector are logically numbered with a single consecutive set of numbers from 0 to N - 1, where N is the total number of components.
-
-    Components are these logical numbers (see above), selecting which of the logically numbered components form the result.
-    Each component is an unsigned 32-bit integer. They can select the components in any order and can repeat components. The first component of the result is selected by the first Component operand, the second component of the result is selected by the second Component operand, etc. A Component literal may also be FFFFFFFF, which means the corresponding result component has no source and is undefined. All Component literals must either be FFFFFFFF or in [0, N - 1] (inclusive).
-
-    Note: A vector “swizzle” can be done by using the vector for both Vector operands, or
-    using an OpUndef for one of the Vector operands.
-    */
-    assert(instruction.opcode == spv::Op::OpVectorShuffle);
-    assertx ("SPIRV simulator: Op_VectorShuffle is currently unimplemented");
-}
-
 void SPIRVSimulator::Op_CompositeInsert(const Instruction& instruction){
     /*
     OpCompositeInsert
@@ -4248,29 +4190,255 @@ void SPIRVSimulator::Op_Transpose(const Instruction& instruction){
     SetValue(result_id, new_matrix);
 }
 
-void SPIRVSimulator::Op_ImageFetch(const Instruction& instruction){
-    assert(instruction.opcode == spv::Op::OpImageFetch);
-    assertx ("SPIRV simulator: Op_ImageFetch is currently unimplemented");
+void SPIRVSimulator::Op_FNegate(const Instruction& instruction){
+    /*
+    OpFNegate
+
+    Inverts the sign bit of Operand. (Note, however, that OpFNegate is still considered a floating-point instruction,
+    and so is subject to the general floating-point rules regarding, for example, subnormals and NaN propagation).
+
+    Result Type must be a scalar or vector of floating-point type.
+    The type of Operand must be the same as Result Type.
+    Results are computed per component.
+    */
+    assert(instruction.opcode == spv::Op::OpFNegate);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand_id = instruction.words[3];
+
+    const Type& type = types_.at(type_id);
+    const Value& val_op = GetValue(operand_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op), "SPIRV simulator: Operand not of vector type");
+
+        auto vec = std::get<std::shared_ptr<VectorV>>(val_op);
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            double elem_result = -1.0 * std::get<double>(vec->elems[i]);
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Float){
+        assertm (std::holds_alternative<double>(val_op), "SPIRV simulator: Operands not of float type");
+
+        Value result = -1.0 * std::get<double>(val_op);
+
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type int, must be vector or float");
+    }
 }
 
-void SPIRVSimulator::Op_FNegate(const Instruction& instruction){
-    assert(instruction.opcode == spv::Op::OpFNegate);
-    assertx ("SPIRV simulator: Op_FNegate is currently unimplemented");
+void SPIRVSimulator::Op_UGreaterThan(const Instruction& instruction){
+    /*
+    OpUGreaterThan
+
+    Unsigned-integer comparison if Operand 1 is greater than Operand 2.
+
+    Result Type must be a scalar or vector of Boolean type.
+
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type.
+    They must have the same component width, and they must have the same number of components as Result Type.
+
+    Results are computed per component.
+    */
+    assert(instruction.opcode == spv::Op::OpUGreaterThan);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand1_id = instruction.words[3];
+    uint32_t operand2_id = instruction.words[4];
+
+    const Type& type = types_.at(type_id);
+    const Value& val_op1 = GetValue(operand1_id);
+    const Value& val_op2 = GetValue(operand2_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands set to be vector type, but they are not, illegal input parameters");
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands are vector type but not of equal length");
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            assertm (std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec1->elems[i]), "SPIRV simulator: Found non-unsigned integer operand in vector operands");
+
+            Value elem_result = (uint64_t)(std::get<uint64_t>(vec1->elems[i]) > std::get<uint64_t>(vec2->elems[i]));
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+
+    } else if (type.kind == Type::Kind::BoolT){
+        Value result = (uint64_t)(std::get<uint64_t>(val_op1) > std::get<uint64_t>(val_op2));
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type, must be vector or bool");
+    }
+}
+
+void SPIRVSimulator::Op_FOrdLessThan(const Instruction& instruction){
+    /*
+
+    OpFOrdLessThan
+
+    Floating-point comparison if operands are ordered and Operand 1 is less than Operand 2.
+    Result Type must be a scalar or vector of Boolean type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of floating-point type.
+    They must have the same type, and they must have the same number of components as Result Type.
+
+    Results are computed per component.
+    */
+    assert(instruction.opcode == spv::Op::OpFOrdLessThan);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand1_id = instruction.words[3];
+    uint32_t operand2_id = instruction.words[4];
+
+    const Type& type = types_.at(type_id);
+    const Value& val_op1 = GetValue(operand1_id);
+    const Value& val_op2 = GetValue(operand2_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands set to be vector type, but they are not, illegal input parameters");
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands are vector type but not of equal length");
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            assertm (std::holds_alternative<double>(vec1->elems[i]) && std::holds_alternative<double>(vec2->elems[i]), "SPIRV simulator: Found non-floating point operand in vector operands");
+
+            Value elem_result = (uint64_t)(std::get<double>(vec1->elems[i]) < std::get<double>(vec2->elems[i]));
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::BoolT){
+        Value result = (uint64_t)(std::get<double>(val_op1) < std::get<double>(val_op2));
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type in, must be vector or float");
+    }
+}
+
+void SPIRVSimulator::Op_FOrdLessThanEqual(const Instruction& instruction){
+    /*
+    OpFOrdLessThanEqual
+
+    Floating-point comparison if operands are ordered and Operand 1 is less than or equal to Operand 2.
+    Result Type must be a scalar or vector of Boolean type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of floating-point type.
+    They must have the same type, and they must have the same number of components as Result Type.
+
+    Results are computed per component.
+    */
+    assert(instruction.opcode == spv::Op::OpFOrdLessThanEqual);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand1_id = instruction.words[3];
+    uint32_t operand2_id = instruction.words[4];
+
+    const Type& type = types_.at(type_id);
+    const Value& val_op1 = GetValue(operand1_id);
+    const Value& val_op2 = GetValue(operand2_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands set to be vector type, but they are not, illegal input parameters");
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands are vector type but not of equal length");
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            assertm (std::holds_alternative<double>(vec1->elems[i]) && std::holds_alternative<double>(vec2->elems[i]), "SPIRV simulator: Found non-floating point operand in vector operands");
+
+            Value elem_result = (uint64_t)(std::get<double>(vec1->elems[i]) <= std::get<double>(vec2->elems[i]));
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::BoolT){
+        Value result = (uint64_t)(std::get<double>(val_op1) <= std::get<double>(val_op2));
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type in, must be vector or float");
+    }
+}
+
+void SPIRVSimulator::Op_Switch(const Instruction& instruction){
+    /*
+    OpSwitch
+
+    Multi-way branch to one of the operand label <id>.
+    Selector must have a type of OpTypeInt. Selector is compared for equality to the Target literals.
+    Default must be the <id> of a label. If Selector does not equal any of the Target literals,
+    control flow branches to the Default label <id>.
+
+    Target must be alternating scalar integer literals and the <id> of a label.
+    If Selector equals a literal, control flow branches to the following label <id>.
+    It is invalid for any two literal to be equal to each other.
+    If Selector does not equal any literal, control flow branches to the Default label <id>.
+    Each literal is interpreted with the type of Selector: The bit width of Selector’s type is the width
+    of each literal’s type. If this width is not a multiple of 32-bits and the OpTypeInt Signedness is set to 1,
+    the literal values are interpreted as being sign extended.
+
+    This instruction must be the last instruction in a block.
+    */
+    assert(instruction.opcode == spv::Op::OpSwitch);
+
+    uint32_t selector_id = instruction.words[1];
+    uint32_t default_id = instruction.words[2];
+
+    const Value& selector_value = GetValue(selector_id);
+    uint64_t selector;
+    if (std::holds_alternative<uint64_t>(selector_value)){
+        selector = std::get<uint64_t>(selector_value);
+    } else if (std::holds_alternative<int64_t>(selector_value)){
+        selector = (uint64_t)std::get<int64_t>(selector_value);
+    } else {
+        assertx ("SPIRV simulator: Selector value in Op_Switch is not an integer");
+    }
+
+    const Type& type = GetType(selector_id);
+    assertm (type.scalar.width <= 32, "SPIRV simulator: Selector ID uses more than 32 bits, this is not handled at present and should be implemented");
+
+    uint32_t label_id = default_id;
+    for (uint32_t i = 3; i < instruction.word_count; i += 2){
+        uint32_t literal = instruction.words[i];
+
+        if (selector == literal){
+            label_id = instruction.words[i + 1];
+            break;
+        }
+    }
+
+    call_stack_.back().pc = result_id_to_inst_index_.at(label_id);
 }
 
 void SPIRVSimulator::Op_MatrixTimesVector(const Instruction& instruction){
     assert(instruction.opcode == spv::Op::OpMatrixTimesVector);
     assertx ("SPIRV simulator: Op_MatrixTimesVector is currently unimplemented");
-}
-
-void SPIRVSimulator::Op_UGreaterThan(const Instruction& instruction){
-    assert(instruction.opcode == spv::Op::OpUGreaterThan);
-    assertx ("SPIRV simulator: Op_UGreaterThan is currently unimplemented");
-}
-
-void SPIRVSimulator::Op_FOrdLessThan(const Instruction& instruction){
-    assert(instruction.opcode == spv::Op::OpFOrdLessThan);
-    assertx ("SPIRV simulator: Op_FOrdLessThan is currently unimplemented");
 }
 
 void SPIRVSimulator::Op_ShiftRightLogical(const Instruction& instruction){
@@ -4293,9 +4461,68 @@ void SPIRVSimulator::Op_BitwiseAnd(const Instruction& instruction){
     assertx ("SPIRV simulator: Op_BitwiseAnd is currently unimplemented");
 }
 
-void SPIRVSimulator::Op_Switch(const Instruction& instruction){
-    assert(instruction.opcode == spv::Op::OpSwitch);
-    assertx ("SPIRV simulator: Op_Switch is currently unimplemented");
+void SPIRVSimulator::Op_ImageFetch(const Instruction& instruction){
+    assert(instruction.opcode == spv::Op::OpImageFetch);
+    assertx ("SPIRV simulator: Op_ImageFetch is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_ImageTexelPointer(const Instruction& instruction){
+    /*
+    OpImageTexelPointer
+
+    Form a pointer to a texel of an image. Use of such a pointer is limited to atomic operations.
+    Result Type must be an OpTypePointer whose Storage Class operand is Image.
+    Its Type operand must be a scalar numerical type or OpTypeVoid.
+
+    Image must have a type of OpTypePointer with Type OpTypeImage.
+    The Sampled Type of the type of Image must be the same as the Type pointed to by Result Type. The Dim operand of Type must not be SubpassData.
+
+    Coordinate and Sample specify which texel and sample within the image to form a pointer to.
+
+    Coordinate must be a scalar or vector of integer type. It must have the number of components specified below,
+    given the following Arrayed and Dim operands of the type of the OpTypeImage.
+
+    If Arrayed is 0:
+    1D: scalar
+    2D: 2 components
+    3D: 3 components
+    Cube: 3 components
+    Rect: 2 components
+    Buffer: scalar
+
+    If Arrayed is 1:
+    1D: 2 components
+    2D: 3 components
+    Cube: 3 components; the face and layer combine into the 3rd component, layer_face,
+    such that face is layer_face % 6 and layer is floor(layer_face / 6)
+
+    Sample must be an integer type scalar. It specifies which sample to select at the given coordinate.
+    Behavior is undefined unless it is a valid <id> for the value 0 when the OpTypeImage has MS of 0.
+    */
+    assert(instruction.opcode == spv::Op::OpImageTexelPointer);
+    assertx ("SPIRV simulator: Op_ImageTexelPointer is currently unimplemented");
+}
+
+void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction){
+    /*
+    OpVectorShuffle
+
+    Select arbitrary components from two vectors to make a new vector.
+
+    Result Type must be an OpTypeVector.
+    The number of components in Result Type must be the same as the number of Component operands.
+
+    Vector 1 and Vector 2 must both have vector types, with the same Component Type as Result Type.
+    They do not have to have the same number of components as Result Type or with each other. They are logically concatenated, forming a single vector with Vector 1’s components appearing before Vector 2’s. The components of this logical vector are logically numbered with a single consecutive set of numbers from 0 to N - 1, where N is the total number of components.
+
+    Components are these logical numbers (see above), selecting which of the logically numbered components form the result.
+    Each component is an unsigned 32-bit integer. They can select the components in any order and can repeat components. The first component of the result is selected by the first Component operand, the second component of the result is selected by the second Component operand, etc. A Component literal may also be FFFFFFFF, which means the corresponding result component has no source and is undefined. All Component literals must either be FFFFFFFF or in [0, N - 1] (inclusive).
+
+    Note: A vector “swizzle” can be done by using the vector for both Vector operands, or
+    using an OpUndef for one of the Vector operands.
+    */
+    assert(instruction.opcode == spv::Op::OpVectorShuffle);
+    assertx ("SPIRV simulator: Op_VectorShuffle is currently unimplemented");
 }
 
 #undef assertx

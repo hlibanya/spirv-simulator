@@ -449,6 +449,7 @@ private:
     void Op_MatrixTimesVector(const Instruction&);
     void Op_UGreaterThan(const Instruction&);
     void Op_FOrdLessThan(const Instruction&);
+    void Op_FOrdLessThanEqual(const Instruction&);
     void Op_ShiftRightLogical(const Instruction&);
     void Op_ShiftLeftLogical(const Instruction&);
     void Op_BitwiseOr(const Instruction&);
