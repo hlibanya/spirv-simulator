@@ -145,6 +145,10 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
 }
 
 void SPIRVSimulator::CheckOpcodeSupport(){
+    // Check that program_words_ has not been messed with
+    uint32_t magic_number = program_words_[0];
+    assertm (magic_number == 0x07230203, "SPIRV simulator: Magic SPIRV header number wrong, should be: 0x07230203");
+
     size_t current_word = 5;
 
     std::set<spv::Op> unimplemented_opcodes;
