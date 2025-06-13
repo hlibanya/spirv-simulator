@@ -44,8 +44,8 @@ namespace SPIRVSimulator {
 struct InputData{
     // The SpirV ID of the entry point to use
     uint32_t entry_point_id = 0;
-    // The label (function name) of the entry point to use, takes priority over entry_point_id if it is set.
-    std::string entry_point_label;
+    // The OpName label (function name) of the entry point to use, takes priority over entry_point_id if it is set.
+    std::string entry_point_op_name = "";
 
     // Data block pointer -> (byte_offset_to_array, array length)
     std::unordered_map<uint64_t, std::pair<size_t, size_t>> rt_array_lengths;
@@ -253,7 +253,8 @@ private:
 
     // Parsing artefacts
     InputData input_data_;  // TODO: Consider not copying this, inputs can be huge, revisit if it becomes a problem
-    std::set<uint32_t> entry_points_;
+    // Contains entry point ID -> entry point OpName labels (labels may be non-existent/empty)
+    std::unordered_map<uint32_t, std::string> entry_points_;
     std::vector<uint32_t> program_words_;
     std::span<const uint32_t> stream_;
     std::vector<Instruction> instructions_;

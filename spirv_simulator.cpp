@@ -278,7 +278,7 @@ void SPIRVSimulator::ParseAll(){
             }
             case spv::Op::OpEntryPoint:{
                 uint32_t entry_point_id = instruction.words[2];
-                entry_points_.insert(entry_point_id);
+                entry_points_[entry_point_id] = "";
                 break;
             }
             default:{
@@ -294,6 +294,8 @@ void SPIRVSimulator::ParseAll(){
 }
 
 void SPIRVSimulator::Run(){
+    std::cout << std::endl;
+
     if(funcs_.empty()){
         if (verbose_){
             std::cerr << "SPIRV simulator: No functions defined in the shader, cannot start execution" << std::endl;
@@ -302,14 +304,30 @@ void SPIRVSimulator::Run(){
     }
 
     uint32_t entry_point_function_id = 0;
-    if (entry_points_.find(input_data_.entry_point_id) == entry_points_.end()){
-        if (verbose_){
-            std::cout << "SPIRV simulator: Warning, entry point function with index: " << input_data_.entry_point_id << " not found, using first available" << std::endl;
+
+    if (input_data_.entry_point_op_name != ""){
+        for (const auto& it : entry_points_){
+            if (it.second == input_data_.entry_point_op_name){
+                std::cout << "SPIRV simulator: Using entry point with OpName label: " << it.second << std::endl;
+                entry_point_function_id = it.first;
+                break;
+            }
         }
 
-        entry_point_function_id = *entry_points_.begin();
-    } else {
-        entry_point_function_id = *entry_points_.find(input_data_.entry_point_id);
+        assertm (entry_point_function_id != 0, "SPIRV simulator: Failed to find an entry point with the given OpName label");
+    }
+
+    if (entry_point_function_id == 0){
+        if (entry_points_.find(input_data_.entry_point_id) == entry_points_.end()){
+            if (verbose_){
+                std::cout << "SPIRV simulator: Warning, entry point function with index: " << input_data_.entry_point_id << " not found, using first available" << std::endl;
+            }
+
+            entry_point_function_id = entry_points_.begin()->first;
+        } else {
+            std::cout << "SPIRV simulator: Using entry point with ID: " << input_data_.entry_point_id << std::endl;
+            entry_point_function_id = input_data_.entry_point_id;
+        }
     }
 
     if (verbose_){
@@ -2552,8 +2570,27 @@ void SPIRVSimulator::Op_SourceExtension(const Instruction& instruction) {
 }
 
 void SPIRVSimulator::Op_Name(const Instruction& instruction) {
-    // We could use this for debug info later, for now we leave it as a NOP
+    /*
+    OpName
+
+    Assign a name string to another instruction’s Result <id>.
+    This has no semantic impact and can safely be removed from a module.
+
+    Target is the Result <id> to assign a name to.
+    It can be the Result <id> of any other instruction; a variable, function, type, intermediate result, etc.
+
+    Name is the string to assign.
+    */
     assert(instruction.opcode == spv::Op::OpName);
+
+    uint32_t target_id = instruction.words[1];
+
+    std::string label = std::string((char*)(&instruction.words[2]), (instruction.word_count - 2) * 4);
+    label.erase(std::find(label.begin(), label.end(), '\0'), label.end());
+
+    if (entry_points_.find(target_id) != entry_points_.end()){
+        entry_points_[target_id] = label;
+    }
 }
 
 void SPIRVSimulator::Op_MemberName(const Instruction& instruction) {
