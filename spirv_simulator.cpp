@@ -157,7 +157,7 @@ void SPIRVSimulator::CheckOpcodeSupport(){
         uint32_t word_count = header_word >> kWordCountShift;
         spv::Op opcode = (spv::Op)(header_word & kOpcodeMask);
 
-        assertm (word_count != 0, "SPIRV simulator: Word count was 0 for instruction. Input SPIRV is broken.");
+        assertm (word_count > 0, "SPIRV simulator: Word count was 0 (or less) for instruction. Input SPIRV is broken.");
 
         bool is_implemented = opcode_dispatchers_.find(opcode) != opcode_dispatchers_.end();
         if (!is_implemented){
