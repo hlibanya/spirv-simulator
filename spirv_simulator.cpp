@@ -44,8 +44,7 @@ void SPIRVSimulator::DecodeHeader(){
     assertm (program_words_.size() >= 5, "SPIRV simulator: SPIRV binary is less than 5 words long, it must at least contain a full valid header.");
 
     uint32_t magic_number = program_words_[0];
-
-    assertm (magic_number == 0x07230203, "SPIRV simulator: Magic SPIRV header number wrong, should be: 0x07230203");
+    assertm (magic_number == 0x07230203, "SPIRV simulator: Magic SPIRV header number is invalid, should be: 0x07230203");
 
     if (verbose_){
         uint32_t version = program_words_[1];
@@ -110,6 +109,7 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpFMul,                   [this](const Instruction& i){Op_FMul(i);});
     R(spv::Op::OpLoopMerge,              [this](const Instruction& i){Op_LoopMerge(i);});
     R(spv::Op::OpIAdd,                   [this](const Instruction& i){Op_IAdd(i);});
+    R(spv::Op::OpISub,                   [this](const Instruction& i){Op_ISub(i);});
     R(spv::Op::OpLogicalNot,             [this](const Instruction& i){Op_LogicalNot(i);});
     R(spv::Op::OpCapability,             [this](const Instruction& i){Op_Capability(i);});
     R(spv::Op::OpExtension,              [this](const Instruction& i){Op_Extension(i);});
@@ -142,6 +142,13 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpUDiv,                   [this](const Instruction& i){Op_UDiv(i);});
     R(spv::Op::OpUMod,                   [this](const Instruction& i){Op_UMod(i);});
     R(spv::Op::OpULessThan,              [this](const Instruction& i){Op_ULessThan(i);});
+    R(spv::Op::OpConstantTrue,           [this](const Instruction& i){Op_ConstantTrue(i);});
+    R(spv::Op::OpConstantFalse,          [this](const Instruction& i){Op_ConstantFalse(i);});
+    R(spv::Op::OpConstantNull,           [this](const Instruction& i){Op_ConstantNull(i);});
+    R(spv::Op::OpAtomicIAdd,             [this](const Instruction& i){Op_AtomicIAdd(i);});
+    R(spv::Op::OpAtomicISub,             [this](const Instruction& i){Op_AtomicISub(i);});
+    R(spv::Op::OpSelect,                 [this](const Instruction& i){Op_Select(i);});
+    R(spv::Op::OpIEqual,                 [this](const Instruction& i){Op_IEqual(i);});
 }
 
 void SPIRVSimulator::CheckOpcodeSupport(){
@@ -1002,7 +1009,7 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id, const uint32_t** initial_dat
                 physical_address_pointers_.push_back(new_pointer);
                 return new_pointer;
             } else {
-                assertx ("SPIRV simulator: Attempting to initialize a raw pointer whose storage class is not PushConstant or PhysicalStorageBuffer");
+                assertx ("SPIRV simulator: Attempting to initialize a raw pointer whose storage class is not PhysicalStorageBuffer");
             }
         }
         default:{
@@ -2323,6 +2330,82 @@ void SPIRVSimulator::Op_IAdd(const Instruction& instruction){
         SetValue(result_id, result);
     } else {
         assertx ("SPIRV simulator: Invalid result type int Op_IAdd, must be vector or int");
+    }
+}
+
+void SPIRVSimulator::Op_ISub(const Instruction& instruction){
+    /*
+    OpISub
+
+    Integer subtraction of Operand 2 from Operand 1.
+    Result Type must be a scalar or vector of integer type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type.
+    They must have the same number of components as Result Type. They must have the same component width as Result Type.
+    The resulting value equals the low-order N bits of the correct result R, where N is the component width
+    and R is computed with enough precision to avoid overflow and underflow.
+
+    Results are computed per component.
+    */
+    assert(instruction.opcode == spv::Op::OpISub);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands not of vector type in Op_IAdd");
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands not of equal/correct length in Op_IAdd");
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result;
+
+            if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
+                elem_result = (std::get<uint64_t>(vec1->elems[i]) - std::get<uint64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<int64_t>(vec2->elems[i])){
+                elem_result = (std::get<uint64_t>(vec1->elems[i]) - std::get<int64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<int64_t>(vec2->elems[i])){
+                elem_result = (std::get<int64_t>(vec1->elems[i]) - std::get<int64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
+                elem_result = (std::get<int64_t>(vec1->elems[i]) - std::get<uint64_t>(vec2->elems[i]));
+            } else {
+                assertx ("SPIRV simulator: Could not find valid parameter type combination for Op_ISub vector operand");
+            }
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Int){
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        Value result;
+        if(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
+            result = (std::get<uint64_t>(op1) - std::get<uint64_t>(op2));
+        } else if(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<int64_t>(op2)){
+            result = (std::get<uint64_t>(op1) - std::get<int64_t>(op2));
+        } else if(std::holds_alternative<int64_t>(op1) && std::holds_alternative<int64_t>(op2)){
+            result = (std::get<int64_t>(op1) - std::get<int64_t>(op2));
+        } else if(std::holds_alternative<int64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
+            result = (std::get<int64_t>(op1) - std::get<uint64_t>(op2));
+        } else {
+            assertx ("SPIRV simulator: Could not find valid parameter type combination for Op_ISub");
+        }
+
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type int Op_ISub, must be vector or int");
     }
 }
 
@@ -3657,6 +3740,290 @@ void SPIRVSimulator::Op_ULessThan(const Instruction& instruction){
         SetValue(result_id, result);
     } else {
         assertx ("SPIRV simulator: Invalid result type int Op_ULessThan, must be vector or bool");
+    }
+}
+
+void SPIRVSimulator::Op_ConstantTrue(const Instruction& instruction){
+    /*
+    OpConstantTrue
+    Declare a true Boolean-type scalar constant.
+    Result Type must be the scalar Boolean type.
+    */
+    assert(instruction.opcode == spv::Op::OpConstant || instruction.opcode == spv::Op::OpSpecConstant);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    const Type& type = types_.at(type_id);
+
+    assertm (type.kind == Type::Kind::BoolT, "SPIRV simulator: Constant type must be bool");
+
+    Value result = (uint64_t)1;
+    SetValue(result_id, result);
+}
+
+void SPIRVSimulator::Op_ConstantFalse(const Instruction& instruction){
+    /*
+    OpConstantFalse
+    Declare a false Boolean-type scalar constant.
+    Result Type must be the scalar Boolean type.
+    */
+    assert(instruction.opcode == spv::Op::OpConstant || instruction.opcode == spv::Op::OpSpecConstant);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    const Type& type = types_.at(type_id);
+
+    assertm (type.kind == Type::Kind::BoolT, "SPIRV simulator: Constant type must be bool");
+
+    Value result = (uint64_t)0;
+    SetValue(result_id, result);
+}
+
+void SPIRVSimulator::Op_ConstantNull(const Instruction& instruction){
+    /*
+    OpConstantNull
+
+    Declare a new null constant value.
+
+    The null value is type dependent, defined as follows:
+    - Scalar Boolean: false
+    - Scalar integer: 0
+    - Scalar floating point: +0.0 (all bits 0)
+    - All other scalars: Abstract
+    - Composites: Members are set recursively to the null constant according to the null value of their constituent types.
+
+    Result Type must be one of the following types:
+    - Scalar or vector Boolean type
+    - Scalar or vector integer type
+    - Scalar or vector floating-point type
+    - Pointer type
+    - Event type
+    - Device side event type
+    - Reservation id type
+    - Queue type
+    - Composite type
+    */
+    assert(instruction.opcode == spv::Op::OpConstantNull);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    SetValue(result_id, MakeDefault(type_id));
+}
+
+void SPIRVSimulator::Op_AtomicIAdd(const Instruction& instruction){
+    /*
+    OpAtomicIAdd
+
+    Perform the following steps atomically with respect to any other atomic accesses within Memory to the same location:
+    1) load through Pointer to get an Original Value,
+    2) get a New Value by integer addition of Original Value and Value, and
+    3) store the New Value back through Pointer.
+
+    The instruction’s result is the Original Value.
+
+    Result Type must be an integer type scalar.
+
+    The type of Value must be the same as Result Type. The type of the value pointed to by Pointer must be the same as Result Type.
+
+    Memory is a memory Scope.
+    */
+    assert(instruction.opcode == spv::Op::OpAtomicIAdd);
+
+    uint32_t result_id = instruction.words[2];
+    uint32_t pointer_id = instruction.words[3];
+    uint32_t value_id = instruction.words[6];
+
+    PointerV pointer = std::get<PointerV>(GetValue(pointer_id));
+    Value pointee_val = Deref(pointer);
+    Value source_value = GetValue(value_id);
+
+    Value result;
+    if (std::holds_alternative<uint64_t>(pointee_val) && std::holds_alternative<uint64_t>(source_value)){
+        result = std::get<uint64_t>(pointee_val) + std::get<uint64_t>(source_value);
+    } else if (std::holds_alternative<int64_t>(pointee_val) && std::holds_alternative<int64_t>(source_value)){
+        result = std::get<int64_t>(pointee_val) + std::get<int64_t>(source_value);
+    } else {
+        assertx ("SPIRV simulator: Invalid type match in Op_AtomicIAdd, must be same type scalar integers");
+    }
+
+    Deref(pointer) = result;
+    SetValue(result_id, pointee_val);
+}
+
+void SPIRVSimulator::Op_AtomicISub(const Instruction& instruction){
+    /*
+    OpAtomicISub
+
+    Perform the following steps atomically with respect to any other atomic accesses within Memory to the same location:
+    1) load through Pointer to get an Original Value,
+    2) get a New Value by integer subtraction of Value from Original Value, and
+    3) store the New Value back through Pointer.
+
+    The instruction’s result is the Original Value.
+
+    Result Type must be an integer type scalar.
+
+    The type of Value must be the same as Result Type. The type of the value pointed to by Pointer must be the same as Result Type.
+
+    Memory is a memory Scope.
+    */
+    assert(instruction.opcode == spv::Op::OpAtomicISub);
+
+    uint32_t result_id = instruction.words[2];
+    uint32_t pointer_id = instruction.words[3];
+    uint32_t value_id = instruction.words[6];
+
+    PointerV pointer = std::get<PointerV>(GetValue(pointer_id));
+    Value pointee_val = Deref(pointer);
+    Value source_value = GetValue(value_id);
+
+    Value result;
+    if (std::holds_alternative<uint64_t>(pointee_val) && std::holds_alternative<uint64_t>(source_value)){
+        result = std::get<uint64_t>(pointee_val) - std::get<uint64_t>(source_value);
+    } else if (std::holds_alternative<int64_t>(pointee_val) && std::holds_alternative<int64_t>(source_value)){
+        result = std::get<int64_t>(pointee_val) - std::get<int64_t>(source_value);
+    } else {
+        assertx ("SPIRV simulator: Invalid type match in Op_AtomicISub, must be same type scalar integers");
+    }
+
+    Deref(pointer) = result;
+    SetValue(result_id, pointee_val);
+}
+
+void SPIRVSimulator::Op_Select(const Instruction& instruction){
+    /*
+    OpSelect
+
+    Select between two objects. Before version 1.4, results are only computed per component.
+    Before version 1.4, Result Type must be a pointer, scalar, or vector.
+    Starting with version 1.4, Result Type can additionally be a composite type other than a vector.
+    The types of Object 1 and Object 2 must be the same as Result Type.
+    Condition must be a scalar or vector of Boolean type.
+    If Condition is a scalar and true, the result is Object 1. If Condition is a scalar and false, the result is Object 2.
+
+    If Condition is a vector, Result Type must be a vector with the same number of components as
+    Condition and the result is a mix of Object 1 and Object 2: If a component of Condition is true, the corresponding component in the result is taken from Object 1, otherwise it is taken from Object 2.
+    */
+    assert(instruction.opcode == spv::Op::OpSelect);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t condition_id = instruction.words[3];
+    uint32_t obj_1_id = instruction.words[4];
+    uint32_t obj_2_id = instruction.words[5];
+
+    const Type& type = types_.at(type_id);
+    const Value& condition_val = GetValue(condition_id);
+    const Value& val_op1 = GetValue(obj_1_id);
+    const Value& val_op2 = GetValue(obj_2_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands set to be vector type in Op_Select, but they are not, illegal input parameters");
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(condition_val), "SPIRV simulator: Condition operand set to be vector type in Op_Select, but is is not, illegal input parameters");
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+        auto cond_vec = std::get<std::shared_ptr<VectorV>>(condition_val);
+
+        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == cond_vec->elems.size()) && (cond_vec->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands are vector type but not of equal length in Op_Select");
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result;
+
+            uint64_t cond_val = std::get<uint64_t>(cond_vec->elems[i]);
+
+            if (cond_val){
+                result_vec->elems.push_back(vec1->elems[i]);
+            } else {
+                result_vec->elems.push_back(vec2->elems[i]);
+            }
+        }
+
+        SetValue(result_id, result);
+    } else {
+        assertm (std::holds_alternative<uint64_t>(condition_val), "SPIRV simulator: Op_Select condition must be a bool or a vector of bools");
+        uint64_t condition_int = std::get<uint64_t>(condition_val);
+
+        if (condition_int){
+            SetValue(result_id, val_op1);
+        } else {
+            SetValue(result_id, val_op2);
+        }
+    }
+}
+
+void SPIRVSimulator::Op_IEqual(const Instruction& instruction){
+    /*
+    OpIEqual
+
+    Integer comparison for equality.
+    Result Type must be a scalar or vector of Boolean type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type. They must have the same component width, and they must have the same number of components as Result Type.
+    Results are computed per component.
+    */
+    assert(instruction.opcode == spv::Op::OpIEqual);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+
+    const Type& type = types_.at(type_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        const Value& val_op1 = GetValue(instruction.words[3]);
+        const Value& val_op2 = GetValue(instruction.words[4]);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands not of vector type in Op_IEqual");
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands not of equal/correct length in Op_IEqual");
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            Value elem_result;
+
+            if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
+                elem_result = (uint64_t)(std::get<uint64_t>(vec1->elems[i]) == std::get<uint64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<int64_t>(vec2->elems[i])){
+                elem_result = (uint64_t)(std::get<uint64_t>(vec1->elems[i]) == (uint64_t)std::get<int64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<int64_t>(vec2->elems[i])){
+                elem_result = (uint64_t)((uint64_t)std::get<int64_t>(vec1->elems[i]) == (uint64_t)std::get<int64_t>(vec2->elems[i]));
+            } else if(std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
+                elem_result = (uint64_t)((uint64_t)std::get<int64_t>(vec1->elems[i]) == std::get<uint64_t>(vec2->elems[i]));
+            } else {
+                assertx ("SPIRV simulator: Could not find valid parameter type combination for Op_IEqual vector operand");
+            }
+
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Int){
+        const Value& op1 = GetValue(instruction.words[3]);
+        const Value& op2 = GetValue(instruction.words[4]);
+
+        Value result;
+        if(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
+            result = (uint64_t)(std::get<uint64_t>(op1) == std::get<uint64_t>(op2));
+        } else if(std::holds_alternative<uint64_t>(op1) && std::holds_alternative<int64_t>(op2)){
+            result = (uint64_t)(std::get<uint64_t>(op1) == (uint64_t)std::get<int64_t>(op2));
+        } else if(std::holds_alternative<int64_t>(op1) && std::holds_alternative<int64_t>(op2)){
+            result = (uint64_t)((uint64_t)std::get<int64_t>(op1) == (uint64_t)std::get<int64_t>(op2));
+        } else if(std::holds_alternative<int64_t>(op1) && std::holds_alternative<uint64_t>(op2)){
+            result = (uint64_t)((uint64_t)std::get<int64_t>(op1) == std::get<uint64_t>(op2));
+        } else {
+            assertx ("SPIRV simulator: Could not find valid parameter type combination for Op_IEqual");
+        }
+
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type int Op_IEqual, must be vector or int");
     }
 }
 
