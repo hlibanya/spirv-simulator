@@ -399,6 +399,7 @@ private:
     void Op_FMul(const Instruction&);
     void Op_LoopMerge(const Instruction&);
     void Op_IAdd(const Instruction&);
+    void Op_ISub(const Instruction&);
     void Op_LogicalNot(const Instruction&);
     void Op_Capability(const Instruction&);
     void Op_Extension(const Instruction&);
@@ -431,6 +432,13 @@ private:
     void Op_UDiv(const Instruction&);
     void Op_UMod(const Instruction&);
     void Op_ULessThan(const Instruction&);
+    void Op_ConstantTrue(const Instruction&);
+    void Op_ConstantFalse(const Instruction&);
+    void Op_ConstantNull(const Instruction&);
+    void Op_AtomicIAdd(const Instruction&);
+    void Op_AtomicISub(const Instruction&);
+    void Op_Select(const Instruction&);
+    void Op_IEqual(const Instruction&);
 };
 
 }
