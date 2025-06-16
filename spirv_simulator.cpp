@@ -934,7 +934,7 @@ Value SPIRVSimulator::MakeScalar(uint32_t type_id, const uint32_t*& words){
         }
         case Type::Kind::BoolT:{
             // Just treat bools as uint64_t types for simplicity
-            assertm (type.scalar.width <= 32, "SPIRV simulator: Bool value with more than 32 bits detected, this is not handled at present");
+            assertm (type.scalar.width <= 64, "SPIRV simulator: Bool value with more than 64 bits detected, this is not handled at present");
             uint64_t tmp_value = (uint64_t)words[0];
             words += 1;
             return tmp_value;
@@ -973,6 +973,10 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id, const uint32_t** initial_dat
                 const uint32_t* buffer_pointer = empty_array;
                 return MakeScalar(type_id, buffer_pointer);
             }
+        }
+        case Type::Kind::Image:{
+            assertm (!initial_data, "SPIRV simulator: Cannot create Image handle with initial_data unless we know the size of the opaque types");
+            return (uint64_t)(0);
         }
         case Type::Kind::Vector:{
             auto vec = std::make_shared<VectorV>();
