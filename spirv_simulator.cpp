@@ -211,7 +211,6 @@ void SPIRVSimulator::Validate(){
     // TODO: Expand this (a lot)
     for(auto &[id, t] : types_){
 
-        assertm (t.kind != Type::Kind::Matrix, "SPIRV simulator: Matrix type detected, finish adding support for parsing these properly to continue");
         assertm (!(t.kind == Type::Kind::Array && !types_.contains(t.array.elem_type_id)), "SPIRV simulator: Missing  array elem type");
         assertm (!(t.kind == Type::Kind::Vector && !types_.contains(t.vector.elem_type_id)), "SPIRV simulator: Missing vector elem type");
         assertm (!(t.kind == Type::Kind::RuntimeArray && !types_.contains(t.array.elem_type_id)), "SPIRV simulator: Missing runtie array elem type");
@@ -785,8 +784,35 @@ void SPIRVSimulator::ExtractWords(const std::byte* external_pointer, uint32_t ty
             }
         }
     } else if (type.kind == Type::Kind::Matrix){
-        // TODO: Handle row/col major decorators and MatrixStride decorator
-        assertx ("SPIRV simulator: Attempt to extract a matrix value from a input buffer, this is unimplemented at present, fix this!");
+        assertm (HasDecorator(type_id, spv::Decoration::DecorationMatrixStride), "SPIRV simulator: No MatrixStride decorator for input matrix");
+        assertm (HasDecorator(type_id, spv::Decoration::DecorationRowMajor) || HasDecorator(type_id, spv::Decoration::DecorationColMajor), "SPIRV simulator: No RowMajor or ColMajor decorator for input matrix");
+
+        const Type& col_type = types_.at(type.matrix.col_type_id);
+        assertm (col_type.kind == Type::Kind::Vector, "SPIRV simulator: Non-vector column type found in matrix");
+
+        // Because row-major matrices may not have a valid col type, we extract the subcomponents directly
+        // We basically treat it as an array
+        // Always extract to a column major order to simplify stuff later
+        uint32_t col_count = type.matrix.col_count;
+        uint32_t row_count = col_type.vector.elem_count;
+
+        uint32_t component_stride = GetDecoratorLiteral(type_id, spv::Decoration::DecorationMatrixStride);
+        bool row_major = HasDecorator(type_id, spv::Decoration::DecorationRowMajor);
+
+        uint32_t bytes_per_subcomponent = std::ceil((double)(GetBitizeOfType(col_type.vector.elem_type_id) / 8));
+
+        for (uint64_t col_index = 0; col_index < col_count; ++col_index){
+            for (uint64_t row_index = 0; row_index < row_count; ++row_index){
+                const std::byte* member_offset_pointer;
+                if (row_major) {
+                    member_offset_pointer = external_pointer + row_index * component_stride + col_index * bytes_per_subcomponent;
+                } else {
+                    member_offset_pointer = external_pointer + col_index * component_stride + row_index * bytes_per_subcomponent;
+                }
+                ExtractWords(member_offset_pointer, col_type.vector.elem_type_id, buffer_data);
+            }
+        }
+
     } else {
         // Assume everything else is tightly packed
         std::vector<uint32_t> base_type_ids;
@@ -839,8 +865,12 @@ uint64_t SPIRVSimulator::GetPointerOffset(const PointerV& pointer_value){
             type_id = type->array.elem_type_id;
             type = &types_.at(type_id);
         } else if (type->kind == Type::Kind::Matrix){
-            // TODO: Handle row/col major decorators and MatrixStride decorator
-            assertx ("SPIRV simulator: Attempt to extract a matrix value from a input buffer, this is unimplemented at present, fix this!");
+            assertm (HasDecorator(type_id, spv::Decoration::DecorationColMajor), "SPIRV simulator: Attempt to get pointer offset to row-major matrix, this is illegal and violates contiguity requirements");
+
+            uint32_t matrix_stride = GetDecoratorLiteral(type_id, spv::Decoration::DecorationMatrixStride);
+            offset += indirection_index * matrix_stride;
+            type_id = type->matrix.col_type_id;
+            type = &types_.at(type_id);
         } else if (type->kind == Type::Kind::Vector){
             type_id = type->vector.elem_type_id;
             type = &types_.at(type->vector.elem_type_id);
@@ -954,6 +984,7 @@ Value SPIRVSimulator::MakeDefault(uint32_t type_id, const uint32_t** initial_dat
             return vec;
         }
         case Type::Kind::Matrix:{
+            // We dont have to deal with col/row major here since we do that on buffer extraction
             auto matrix = std::make_shared<MatrixV>();
             matrix->cols.reserve(type.matrix.col_count);
             for(uint32_t i = 0; i < type.matrix.col_count; ++i){
@@ -2030,7 +2061,6 @@ void SPIRVSimulator::Op_Branch(const Instruction& instruction){
     Target Label must be the Result <id> of an OpLabel instruction in the current function.
     This instruction must be the last instruction in a block.
     */
-    // TODO: We should probably verify that the target instructions we are jumping to are labels
     assert(instruction.opcode == spv::Op::OpBranch);
 
     uint32_t result_id = instruction.words[1];
