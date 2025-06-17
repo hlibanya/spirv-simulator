@@ -4661,6 +4661,8 @@ void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction){
     uint32_t vec1_id = instruction.words[3];
     uint32_t vec2_id = instruction.words[4];
 
+    assertm (types_.at(type_id).kind == Type::Kind::Vector, "SPIRV simulator: Non-vector result type in OpVectorShuffle");
+
     const Value& vector1_val = GetValue(vec1_id);
     const Value& vector2_val = GetValue(vec2_id);
 
@@ -4668,18 +4670,19 @@ void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction){
     assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector2_val), "SPIRV simulator: Non-vector value in vector operand 2 in Op_VectorShuffle");
 
     const std::shared_ptr<VectorV>& vector1 = std::get<std::shared_ptr<VectorV>>(vector1_val);
-    const std::shared_ptr<VectorV>& vector1 = std::get<std::shared_ptr<VectorV>>(vector2_val);
+    const std::shared_ptr<VectorV>& vector2 = std::get<std::shared_ptr<VectorV>>(vector2_val);
 
     std::vector<Value> values;
     values.insert(values.end(), vector1->elems.begin(), vector1->elems.end());
     values.insert(values.end(), vector2->elems.begin(), vector2->elems.end());
 
     std::shared_ptr<VectorV> result = std::make_shared<VectorV>();
-    for (uint32_t literal_index = 5; comp_literal_index < instruction.word_count; ++literal_index){
+    for (uint32_t literal_index = 5; literal_index < instruction.word_count; ++literal_index){
         assertm (literal_index < values.size(), "SPIRV simulator: Literal index OOB in OpVectorShuffle");
 
         if (literal_index == 0xFFFFFFFF){
-            result->elems.push_back(0xFFFFFFFF);
+            Value undef_val = (uint64_t)0xFFFFFFFF;
+            result->elems.push_back(undef_val);
         } else {
             result->elems.push_back(values[literal_index]);
         }
