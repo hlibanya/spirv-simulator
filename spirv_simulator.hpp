@@ -473,6 +473,15 @@ private:
     void Op_All(const Instruction&);
     void Op_Any(const Instruction&);
     void Op_BitCount(const Instruction&);
+    void Op_Kill(const Instruction&);
+    void Op_Unreachable(const Instruction&);
+    void Op_Undef(const Instruction&);
+    void Op_VectorTimesMatrix(const Instruction&);
+    void Op_ULessThanEqual(const Instruction&);
+    void Op_SLessThanEqual(const Instruction&);
+    void Op_SGreaterThanEqual(const Instruction&);
+    void Op_SGreaterThan(const Instruction&);
+    void Op_SDiv(const Instruction&);
 };
 
 }
