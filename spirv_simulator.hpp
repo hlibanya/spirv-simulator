@@ -245,6 +245,9 @@ public:
     explicit SPIRVSimulator(const std::vector<uint32_t>& program_words, const InputData& input_data, bool verbose=false);
     void Run();
 
+    // When called (after a Run()) will write the outputs to the input_data mapped pointers
+    void WriteOutputs();
+
     const std::vector<PhysicalAddressData>& GetPhysicalAddressData() const {return physical_address_pointer_source_data_;}
 
 private:
@@ -252,7 +255,7 @@ private:
     uint32_t next_external_id_ = 0;
 
     // Parsing artefacts
-    InputData input_data_;  // TODO: Consider not copying this, inputs can be huge, revisit if it becomes a problem
+    InputData input_data_;
     // Contains entry point ID -> entry point OpName labels (labels may be non-existent/empty)
     std::unordered_map<uint32_t, std::string> entry_points_;
     std::vector<uint32_t> program_words_;

@@ -393,6 +393,10 @@ void SPIRVSimulator::Run(){
     }
 }
 
+void SPIRVSimulator::void WriteOutputs(){
+    assertx ("SPIRV simulator: Value writeout not implemented yet");
+}
+
 void SPIRVSimulator::ExecuteInstruction(const Instruction& instruction){
     auto dispatcher = opcode_dispatchers_.find(instruction.opcode);
     if(dispatcher == opcode_dispatchers_.end()){
@@ -4508,8 +4512,54 @@ void SPIRVSimulator::Op_Switch(const Instruction& instruction){
 }
 
 void SPIRVSimulator::Op_MatrixTimesVector(const Instruction& instruction){
+    /*
+    OpMatrixTimesVector
+
+    Linear-algebraic Matrix X Vector.
+
+    Result Type must be a vector of floating-point type.
+    Matrix must be an OpTypeMatrix whose Column Type is Result Type.
+    Vector must be a vector with the same Component Type as the Component Type in Result Type.
+
+    Its number of components must equal the number of columns in Matrix.
+    */
     assert(instruction.opcode == spv::Op::OpMatrixTimesVector);
-    assertx ("SPIRV simulator: Op_MatrixTimesVector is currently unimplemented");
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t matrix_id = instruction.words[3];
+    uint32_t vector_id = instruction.words[4];
+
+    const Type& type = GetType(type_id);
+    assertm (type.kind == Type::Kind::Vector, "SPIRV simulator: Result operand in Op_MatrixTimesVector is not a vector");
+    assertm (GetType(matrix_id).kind == Type::Kind::Matrix, "SPIRV simulator: First operand in Op_MatrixTimesVector is not a matrix");
+    assertm (GetType(vector_id).kind == Type::Kind::Vector, "SPIRV simulator: First operand in Op_MatrixTimesVector is not a vector");
+
+    const std::shared_ptr<VectorV>& vector = std::get<std::shared_ptr<VectorV>>(GetValue(vector_id));
+    const std::shared_ptr<MatrixV>& matrix = std::get<std::shared_ptr<MatrixV>>(GetValue(matrix_id));
+
+    std::vector<double> tmp_result;
+    tmp_result.resize(type.vector.elem_count);
+
+    for (uint32_t col_index = 0; col_index < matrix->cols.size(); ++col_index){
+        for (uint32_t row_index = 0; row_index < type.vector.elem_count; ++row_index){
+            assertm (std::holds_alternative<std::shared_ptr<VectorV>>(matrix->cols[col_index]), "SPIRV simulator: Non-vector column value found in matrix operand of Op_MatrixTimesVector");
+            assertm (std::holds_alternative<double>(vector->elems[row_index]), "SPIRV simulator: Non-floating point value found in vector operand of Op_MatrixTimesVector");
+
+            const std::shared_ptr<VectorV>& col_vector = std::get<std::shared_ptr<VectorV>>(matrix->cols[col_index]);
+            assertm (std::holds_alternative<double>(col_vector->elems[row_index]), "SPIRV simulator: Non-floating point value found in column vector operand of Op_MatrixTimesVector");
+
+            tmp_result[row_index] += std::get<double>(col_vector->elems[row_index]) * std::get<double>(vector->elems[col_index]);
+        }
+
+    }
+
+    std::shared_ptr<VectorV> result = std::make_shared<VectorV>();
+    for (double result_val : tmp_result){
+        result->elems.push_back(result_val);
+    }
+
+    SetValue(result_id, result);
 }
 
 void SPIRVSimulator::Op_ShiftRightLogical(const Instruction& instruction){
