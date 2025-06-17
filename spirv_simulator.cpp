@@ -164,6 +164,7 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpSwitch,                 [this](const Instruction& i){Op_Switch(i);});
     R(spv::Op::OpAll,                    [this](const Instruction& i){Op_All(i);});
     R(spv::Op::OpAny,                    [this](const Instruction& i){Op_Any(i);});
+    R(spv::Op::OpBitCount,               [this](const Instruction& i){Op_BitCount(i);});
 }
 
 void SPIRVSimulator::CheckOpcodeSupport(){
@@ -4908,6 +4909,51 @@ void SPIRVSimulator::Op_Any(const Instruction& instruction){
 
     Value result = (uint64_t)result_bool;
     SetValue(result_id, result);
+}
+
+void SPIRVSimulator::Op_BitCount(const Instruction& instruction){
+    /*
+    OpBitCount
+
+    Count the number of set bits in an object.
+
+    Results are computed per component.
+
+    Result Type must be a scalar or vector of integer type.
+    The components must be wide enough to hold the unsigned Width of Base as an unsigned value.
+    That is, no sign bit is needed or counted when checking for a wide enough result width.
+
+    Base must be a scalar or vector of integer type. It must have the same number of components as Result Type.
+
+    The result is the unsigned value that is the number of bits in Base that are 1.
+    */
+    assert(instruction.opcode == spv::Op::OpBitCount);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t base_id = instruction.words[3];
+
+    const Type& type = GetType(type_id);
+    const Value& base_val = GetValue(base_id);
+
+    uint32_t base_type_id = GetTypeID(base_id);
+
+    if (type.kind == Type::Kind::Vector){
+        const Type& base_type = GetType(base_type_id);
+        const std::shared_ptr<VectorV> vec = std::get<std::shared_ptr<VectorV>>(base_val);
+        std::shared_ptr<VectorV> result_vec = std::make_shared<VectorV>();
+
+        for (const Value& val : vec->elems){
+            (void)val;
+            result_vec->elems.push_back(GetBitizeOfType(base_type.vector.elem_type_id));
+        }
+
+        SetValue(result_id, result_vec);
+    } else if (type.kind == Type::Kind::Int){
+        SetValue(result_id, (uint64_t)GetBitizeOfType(base_type_id));
+    } else {
+        assertx ("SPIRV simulator: Invalid result value, must be vector or int");
+    }
 }
 
 void SPIRVSimulator::Op_ImageFetch(const Instruction& instruction){

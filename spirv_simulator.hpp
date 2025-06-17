@@ -472,6 +472,7 @@ private:
     void Op_Switch(const Instruction&);
     void Op_All(const Instruction&);
     void Op_Any(const Instruction&);
+    void Op_BitCount(const Instruction&);
 };
 
 }
