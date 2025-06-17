@@ -4468,7 +4468,7 @@ void SPIRVSimulator::Op_FOrdLessThanEqual(const Instruction& instruction){
         Value result = (uint64_t)(std::get<double>(val_op1) <= std::get<double>(val_op2));
         SetValue(result_id, result);
     } else {
-        assertx ("SPIRV simulator: Invalid result type in, must be vector or float");
+        assertx ("SPIRV simulator: Invalid result type, must be vector or float");
     }
 }
 
@@ -4573,6 +4573,61 @@ void SPIRVSimulator::Op_MatrixTimesVector(const Instruction& instruction){
     SetValue(result_id, result);
 }
 
+void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction){
+    /*
+    OpVectorShuffle
+
+    Select arbitrary components from two vectors to make a new vector.
+
+    Result Type must be an OpTypeVector.
+    The number of components in Result Type must be the same as the number of Component operands.
+
+    Vector 1 and Vector 2 must both have vector types, with the same Component Type as Result Type.
+    They do not have to have the same number of components as Result Type or with each other. They are logically concatenated, forming a single vector with Vector 1’s components appearing before Vector 2’s. The components of this logical vector are logically numbered with a single consecutive set of numbers from 0 to N - 1, where N is the total number of components.
+
+    Components are these logical numbers (see above), selecting which of the logically numbered components form the result.
+    Each component is an unsigned 32-bit integer. They can select the components in any order and can repeat components. The first component of the result is selected by the first Component operand, the second component of the result is selected by the second Component operand, etc. A Component literal may also be FFFFFFFF, which means the corresponding result component has no source and is undefined. All Component literals must either be FFFFFFFF or in [0, N - 1] (inclusive).
+
+    Note: A vector “swizzle” can be done by using the vector for both Vector operands, or
+    using an OpUndef for one of the Vector operands.
+    */
+    assert(instruction.opcode == spv::Op::OpVectorShuffle);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t vec1_id = instruction.words[3];
+    uint32_t vec2_id = instruction.words[4];
+
+    assertm (types_.at(type_id).kind == Type::Kind::Vector, "SPIRV simulator: Non-vector result type in OpVectorShuffle");
+
+    const Value& vector1_val = GetValue(vec1_id);
+    const Value& vector2_val = GetValue(vec2_id);
+
+    assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector1_val), "SPIRV simulator: Non-vector value in vector operand 1 in Op_VectorShuffle");
+    assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector2_val), "SPIRV simulator: Non-vector value in vector operand 2 in Op_VectorShuffle");
+
+    const std::shared_ptr<VectorV>& vector1 = std::get<std::shared_ptr<VectorV>>(vector1_val);
+    const std::shared_ptr<VectorV>& vector2 = std::get<std::shared_ptr<VectorV>>(vector2_val);
+
+    std::vector<Value> values;
+    values.insert(values.end(), vector1->elems.begin(), vector1->elems.end());
+    values.insert(values.end(), vector2->elems.begin(), vector2->elems.end());
+
+    std::shared_ptr<VectorV> result = std::make_shared<VectorV>();
+    for (uint32_t literal_index = 5; literal_index < instruction.word_count; ++literal_index){
+        assertm (literal_index < values.size(), "SPIRV simulator: Literal index OOB in OpVectorShuffle");
+
+        if (literal_index == 0xFFFFFFFF){
+            Value undef_val = (uint64_t)0xFFFFFFFF;
+            result->elems.push_back(undef_val);
+        } else {
+            result->elems.push_back(values[literal_index]);
+        }
+    }
+
+    SetValue(result_id, result);
+}
+
 void SPIRVSimulator::Op_ShiftRightLogical(const Instruction& instruction){
     assert(instruction.opcode == spv::Op::OpShiftRightLogical);
     assertx ("SPIRV simulator: Op_ShiftRightLogical is currently unimplemented");
@@ -4584,13 +4639,152 @@ void SPIRVSimulator::Op_ShiftLeftLogical(const Instruction& instruction){
 }
 
 void SPIRVSimulator::Op_BitwiseOr(const Instruction& instruction){
+    /*
+    OpBitwiseOr
+
+    Result is 1 if either Operand 1 or Operand 2 is 1. Result is 0 if both Operand 1 and Operand 2 are 0.
+
+    Results are computed per component, and within each component, per bit.
+
+    Result Type must be a scalar or vector of integer type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type.
+    They must have the same number of components as Result Type.
+    They must have the same component width as Result Type.
+    */
     assert(instruction.opcode == spv::Op::OpBitwiseOr);
-    assertx ("SPIRV simulator: Op_BitwiseOr is currently unimplemented");
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t op1_id = instruction.words[3];
+    uint32_t op2_id = instruction.words[4];
+
+    const Type& type = GetType(type_id);
+    const Value& val_op1 = GetValue(op1_id);
+    const Value& val_op2 = GetValue(op2_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands set to be vector type, but they are not, illegal input parameters");
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands are vector type but not of equal length");
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            uint64_t val1;
+            if (std::holds_alternative<int64_t>(vec1->elems[i])){
+                val1 =  bit_cast<uint64_t>(std::get<int64_t>(vec1->elems[i]));
+            } else {
+                val1 = std::get<uint64_t>(vec1->elems[i]);
+            }
+
+            uint64_t val2;
+            if (std::holds_alternative<int64_t>(vec2->elems[i])){
+                val2 = bit_cast<uint64_t>(std::get<int64_t>(vec2->elems[i]));
+            } else {
+                val2 = std::get<uint64_t>(vec2->elems[i]);
+            }
+
+            Value elem_result = (uint64_t)(val1 | val2);
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Int){
+        uint64_t val1;
+        if (std::holds_alternative<int64_t>(val_op1)){
+            val1 =  bit_cast<uint64_t>(std::get<int64_t>(val_op1));
+        } else {
+            val1 = std::get<uint64_t>(val_op1);
+        }
+
+        uint64_t val2;
+        if (std::holds_alternative<int64_t>(val_op2)){
+            val2 = bit_cast<uint64_t>(std::get<int64_t>(val_op2));
+        } else {
+            val2 = std::get<uint64_t>(val_op2);
+        }
+        Value result = (uint64_t)(val1 | val2);
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type, must be vector or int");
+    }
 }
 
 void SPIRVSimulator::Op_BitwiseAnd(const Instruction& instruction){
+    /*
+    OpBitwiseAnd
+
+    Result is 1 if both Operand 1 and Operand 2 are 1. Result is 0 if either Operand 1 or Operand 2 are 0.
+
+    Results are computed per component, and within each component, per bit.
+
+    Result Type must be a scalar or vector of integer type.
+    The type of Operand 1 and Operand 2 must be a scalar or vector of integer type.
+    They must have the same number of components as Result Type. They must have the same component width as Result Type.
+    */
     assert(instruction.opcode == spv::Op::OpBitwiseAnd);
-    assertx ("SPIRV simulator: Op_BitwiseAnd is currently unimplemented");
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t op1_id = instruction.words[3];
+    uint32_t op2_id = instruction.words[4];
+
+    const Type& type = GetType(type_id);
+    const Value& val_op1 = GetValue(op1_id);
+    const Value& val_op2 = GetValue(op2_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands set to be vector type, but they are not, illegal input parameters");
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
+
+        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands are vector type but not of equal length");
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            uint64_t val1;
+            if (std::holds_alternative<int64_t>(vec1->elems[i])){
+                val1 =  bit_cast<uint64_t>(std::get<int64_t>(vec1->elems[i]));
+            } else {
+                val1 = std::get<uint64_t>(vec1->elems[i]);
+            }
+
+            uint64_t val2;
+            if (std::holds_alternative<int64_t>(vec2->elems[i])){
+                val2 = bit_cast<uint64_t>(std::get<int64_t>(vec2->elems[i]));
+            } else {
+                val2 = std::get<uint64_t>(vec2->elems[i]);
+            }
+
+            Value elem_result = (uint64_t)(val1 & val2);
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Int){
+        uint64_t val1;
+        if (std::holds_alternative<int64_t>(val_op1)){
+            val1 =  bit_cast<uint64_t>(std::get<int64_t>(val_op1));
+        } else {
+            val1 = std::get<uint64_t>(val_op1);
+        }
+
+        uint64_t val2;
+        if (std::holds_alternative<int64_t>(val_op2)){
+            val2 = bit_cast<uint64_t>(std::get<int64_t>(val_op2));
+        } else {
+            val2 = std::get<uint64_t>(val_op2);
+        }
+        Value result = (uint64_t)(val1 & val2);
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type, must be vector or int");
+    }
 }
 
 void SPIRVSimulator::Op_ImageFetch(const Instruction& instruction){
@@ -4633,62 +4827,6 @@ void SPIRVSimulator::Op_ImageTexelPointer(const Instruction& instruction){
     */
     assert(instruction.opcode == spv::Op::OpImageTexelPointer);
     assertx ("SPIRV simulator: Op_ImageTexelPointer is currently unimplemented");
-}
-
-void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction){
-    /*
-    OpVectorShuffle
-
-    Select arbitrary components from two vectors to make a new vector.
-
-    Result Type must be an OpTypeVector.
-    The number of components in Result Type must be the same as the number of Component operands.
-
-    Vector 1 and Vector 2 must both have vector types, with the same Component Type as Result Type.
-    They do not have to have the same number of components as Result Type or with each other. They are logically concatenated, forming a single vector with Vector 1’s components appearing before Vector 2’s. The components of this logical vector are logically numbered with a single consecutive set of numbers from 0 to N - 1, where N is the total number of components.
-
-    Components are these logical numbers (see above), selecting which of the logically numbered components form the result.
-    Each component is an unsigned 32-bit integer. They can select the components in any order and can repeat components. The first component of the result is selected by the first Component operand, the second component of the result is selected by the second Component operand, etc. A Component literal may also be FFFFFFFF, which means the corresponding result component has no source and is undefined. All Component literals must either be FFFFFFFF or in [0, N - 1] (inclusive).
-
-    Note: A vector “swizzle” can be done by using the vector for both Vector operands, or
-    using an OpUndef for one of the Vector operands.
-    */
-    assert(instruction.opcode == spv::Op::OpVectorShuffle);
-    assertx ("SPIRV simulator: Op_VectorShuffle is currently unimplemented");
-
-    uint32_t type_id = instruction.words[1];
-    uint32_t result_id = instruction.words[2];
-    uint32_t vec1_id = instruction.words[3];
-    uint32_t vec2_id = instruction.words[4];
-
-    assertm (types_.at(type_id).kind == Type::Kind::Vector, "SPIRV simulator: Non-vector result type in OpVectorShuffle");
-
-    const Value& vector1_val = GetValue(vec1_id);
-    const Value& vector2_val = GetValue(vec2_id);
-
-    assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector1_val), "SPIRV simulator: Non-vector value in vector operand 1 in Op_VectorShuffle");
-    assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector2_val), "SPIRV simulator: Non-vector value in vector operand 2 in Op_VectorShuffle");
-
-    const std::shared_ptr<VectorV>& vector1 = std::get<std::shared_ptr<VectorV>>(vector1_val);
-    const std::shared_ptr<VectorV>& vector2 = std::get<std::shared_ptr<VectorV>>(vector2_val);
-
-    std::vector<Value> values;
-    values.insert(values.end(), vector1->elems.begin(), vector1->elems.end());
-    values.insert(values.end(), vector2->elems.begin(), vector2->elems.end());
-
-    std::shared_ptr<VectorV> result = std::make_shared<VectorV>();
-    for (uint32_t literal_index = 5; literal_index < instruction.word_count; ++literal_index){
-        assertm (literal_index < values.size(), "SPIRV simulator: Literal index OOB in OpVectorShuffle");
-
-        if (literal_index == 0xFFFFFFFF){
-            Value undef_val = (uint64_t)0xFFFFFFFF;
-            result->elems.push_back(undef_val);
-        } else {
-            result->elems.push_back(values[literal_index]);
-        }
-    }
-
-    SetValue(result_id, result);
 }
 
 #undef assertx
