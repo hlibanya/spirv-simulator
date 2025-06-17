@@ -482,6 +482,11 @@ private:
     void Op_SGreaterThanEqual(const Instruction&);
     void Op_SGreaterThan(const Instruction&);
     void Op_SDiv(const Instruction&);
+    void Op_SNegate(const Instruction&);
+    void Op_LogicalOr(const Instruction&);
+    void Op_LogicalAnd(const Instruction&);
+    void Op_MatrixTimesMatrix(const Instruction&);
+    void Op_IsNan(const Instruction&);
 };
 
 }

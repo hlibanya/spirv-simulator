@@ -174,7 +174,11 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpSGreaterThanEqual,      [this](const Instruction& i){Op_SGreaterThanEqual(i);});
     R(spv::Op::OpSGreaterThan,           [this](const Instruction& i){Op_SGreaterThan(i);});
     R(spv::Op::OpSDiv,                   [this](const Instruction& i){Op_SDiv(i);});
-
+    R(spv::Op::OpSNegate,                [this](const Instruction& i){Op_SNegate(i);});
+    R(spv::Op::OpLogicalOr,              [this](const Instruction& i){Op_LogicalOr(i);});
+    R(spv::Op::OpLogicalAnd,             [this](const Instruction& i){Op_LogicalAnd(i);});
+    R(spv::Op::OpMatrixTimesMatrix,      [this](const Instruction& i){Op_MatrixTimesMatrix(i);});
+    R(spv::Op::OpIsNan,                  [this](const Instruction& i){Op_IsNan(i);});
 }
 
 void SPIRVSimulator::CheckOpcodeSupport(){
@@ -2567,41 +2571,25 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction){
         Value result = std::make_shared<VectorV>();
         auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
 
-        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(operand), "SPIRV simulator: Invalid valye type for Op_LogicalNot, must be vector when using vector type");
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(operand), "SPIRV simulator: Invalid value type, must be vector when using vector type");
 
         auto vec = std::get<std::shared_ptr<VectorV>>(operand);
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
-            if (std::holds_alternative<double>(vec->elems[i])){
-                result_vec->elems.push_back((uint64_t)(!std::get<double>(vec->elems[i])));
-            } else if (std::holds_alternative<uint64_t>(vec->elems[i])){
-                result_vec->elems.push_back((uint64_t)!(std::get<uint64_t>(vec->elems[i])));
-            } else if (std::holds_alternative<int64_t>(vec->elems[i])){
-                result_vec->elems.push_back((uint64_t)!(std::get<int64_t>(vec->elems[i])));
-            } else {
-                assertx ("SPIRV simulator: Could not find valid parameter type combination for Op_LogicalNot vector operand");
-            }
+            assertm (std::holds_alternative<uint64_t>(vec->elems[i]), "SPIRV simulator: Non-boolean type found in vector operand");
+            result_vec->elems.push_back((uint64_t)!(std::get<uint64_t>(vec->elems[i])));
         }
 
         SetValue(result_id, result);
     } else if (type.kind == Type::Kind::BoolT){
         Value result;
 
-        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
-            if (std::holds_alternative<double>(operand)){
-                result = (uint64_t)(!std::get<double>(operand));
-            } else if (std::holds_alternative<uint64_t>(operand)){
-                result = (uint64_t)!(std::get<uint64_t>(operand));
-            } else if (std::holds_alternative<int64_t>(operand)){
-                result = (uint64_t)!(std::get<int64_t>(operand));
-            } else {
-                assertx ("SPIRV simulator: Could not find valid parameter type combination for Op_LogicalNot");
-            }
-        }
+        assertm (std::holds_alternative<uint64_t>(operand), "SPIRV simulator: Non-boolean type found in operand");
+        result = (uint64_t)!(std::get<uint64_t>(operand));
 
         SetValue(result_id, result);
     } else {
-        assertx ("SPIRV simulator: Invalid result type int Op_LogicalNot, must be vector or bool");
+        assertx ("SPIRV simulator: Invalid result type, must be vector or bool");
     }
 }
 
@@ -3804,17 +3792,17 @@ void SPIRVSimulator::Op_UMod(const Instruction& instruction){
         const Value& val_op1 = GetValue(instruction.words[3]);
         const Value& val_op2 = GetValue(instruction.words[4]);
 
-        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands set to be vector type in Op_UDiv, but they are not, illegal input parameters");
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands set to be vector type, but they are not, illegal input parameters");
 
         auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
         auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
 
-        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands are vector type but not of equal length in Op_UDiv");
+        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands are vector type but not of equal length");
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
             Value elem_result;
 
-            assertm (std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i]), "SPIRV simulator: Found unsigned-integer operand in Op_UDiv vector operands");
+            assertm (std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i]), "SPIRV simulator: Found non-unsigned int operand in vector operands");
 
             elem_result = std::get<uint64_t>(vec1->elems[i]) % std::get<uint64_t>(vec2->elems[i]);
 
@@ -3827,13 +3815,13 @@ void SPIRVSimulator::Op_UMod(const Instruction& instruction){
         const Value& op2 = GetValue(instruction.words[4]);
 
         Value result;
-        assertm (std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2), "SPIRV simulator: Found unsigned-integer operand in Op_UDiv");
+        assertm (std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2), "SPIRV simulator: Found non-unsigned int operand");
 
         result = std::get<uint64_t>(op1) % std::get<uint64_t>(op2);
 
         SetValue(result_id, result);
     } else {
-        assertx ("SPIRV simulator: Invalid result type int Op_UDiv, must be vector or unsigned-integer");
+        assertx ("SPIRV simulator: Invalid result type, must be vector or unsigned-integer");
     }
 }
 
@@ -3861,17 +3849,17 @@ void SPIRVSimulator::Op_ULessThan(const Instruction& instruction){
         const Value& val_op1 = GetValue(instruction.words[3]);
         const Value& val_op2 = GetValue(instruction.words[4]);
 
-        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands set to be vector type in Op_ULessThan, but they are not, illegal input parameters");
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op1) && std::holds_alternative<std::shared_ptr<VectorV>>(val_op2), "SPIRV simulator: Operands set to be vector type, but they are not, illegal input parameters");
 
         auto vec1 = std::get<std::shared_ptr<VectorV>>(val_op1);
         auto vec2 = std::get<std::shared_ptr<VectorV>>(val_op2);
 
-        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands are vector type but not of equal length in Op_ULessThan");
+        assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands are vector type but not of equal length");
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
             Value elem_result;
 
-            assertm (std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i]), "SPIRV simulator: Found non-unsigned integer operand in Op_ULessThan vector operands");
+            assertm (std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i]), "SPIRV simulator: Found non-unsigned integer operand in vector operands");
 
             elem_result = (uint64_t)(std::get<uint64_t>(vec1->elems[i]) < std::get<uint64_t>(vec2->elems[i]));
 
@@ -3884,13 +3872,13 @@ void SPIRVSimulator::Op_ULessThan(const Instruction& instruction){
         const Value& op2 = GetValue(instruction.words[4]);
 
         Value result;
-        assertm (std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2), "SPIRV simulator: Found non-unsigned integer operand in Op_ULessThan");
+        assertm (std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2), "SPIRV simulator: Found non-unsigned integer operand");
 
         result = (uint64_t)(std::get<uint64_t>(op1) < std::get<uint64_t>(op2));
 
         SetValue(result_id, result);
     } else {
-        assertx ("SPIRV simulator: Invalid result type int Op_ULessThan, must be vector or bool");
+        assertx ("SPIRV simulator: Invalid result type, must be vector or bool");
     }
 }
 
@@ -5384,6 +5372,244 @@ void SPIRVSimulator::Op_SDiv(const Instruction& instruction){
     } else {
         assertx ("SPIRV simulator: Invalid result type, must be vector or signed int");
     }
+}
+
+void SPIRVSimulator::Op_SNegate(const Instruction& instruction){
+    /*
+    
+    OpSNegate
+
+    Signed-integer subtract of Operand from zero.
+
+    Result Type must be a scalar or vector of integer type.
+
+    Operand’s type must be a scalar or vector of integer type.
+    It must have the same number of components as Result Type.
+    The component width must equal the component width in Result Type.
+
+    Results are computed per component.
+    */
+    assert(instruction.opcode == spv::Op::OpSNegate);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand_id = instruction.words[3];
+
+    const Type& type = types_.at(type_id);
+    const Value& val_op = GetValue(operand_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        // TODO: Operands dont have to be signed? If so, fix it
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(val_op), "SPIRV simulator: Operand not of vector type");
+
+        auto vec = std::get<std::shared_ptr<VectorV>>(val_op);
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            int64_t elem_result = 0 - std::get<int64_t>(vec->elems[i]);
+            result_vec->elems.push_back(elem_result);
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Float){
+        // TODO: Operands dont have to be signed? If so, fix it
+        assertm (std::holds_alternative<int64_t>(val_op), "SPIRV simulator: Operands not of int type");
+
+        Value result = 0 - std::get<int64_t>(val_op);
+
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type int, must be vector or integer");
+    }
+}
+
+void SPIRVSimulator::Op_LogicalOr(const Instruction& instruction){
+    /*
+    OpLogicalOr
+
+    Result is true if either Operand 1 or Operand 2 is true. Result is false if both Operand 1 and Operand 2 are false.
+    Result Type must be a scalar or vector of Boolean type.
+    The type of Operand 1 must be the same as Result Type.
+    The type of Operand 2 must be the same as Result Type.
+
+    Results are computed per component.
+    */
+    assert(instruction.opcode == spv::Op::OpLogicalOr);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand1_id = instruction.words[3];
+    uint32_t operand2_id = instruction.words[4];
+
+    const Type& type = types_.at(type_id);
+    const Value& operand1 = GetValue(operand1_id);
+    const Value& operand2 = GetValue(operand2_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(operand1), "SPIRV simulator: Invalid value type for operand 1, must be vector when using vector type");
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(operand2), "SPIRV simulator: Invalid value type for operand 2, must be vector when using vector type");
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(operand1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(operand2);
+
+        assertm (std::holds_alternative<uint64_t>(vec1->elems[0]), "SPIRV simulator: Invalid vector component value for operand 1, must be bool");
+        assertm (std::holds_alternative<uint64_t>(vec2->elems[0]), "SPIRV simulator: Invalid vector component value for operand 2, must be bool");
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            result_vec->elems.push_back((uint64_t)(std::get<uint64_t>(vec1->elems[i]) || std::get<uint64_t>(vec2->elems[i])));
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::BoolT){
+        assertm (std::holds_alternative<uint64_t>(operand1), "SPIRV simulator: Invalid value for operand 1, must be bool");
+        assertm (std::holds_alternative<uint64_t>(operand2), "SPIRV simulator: Invalid value for operand 2, must be bool");
+        Value result = (uint64_t)(std::get<uint64_t>(operand1) || std::get<uint64_t>(operand2));
+
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type, must be vector or bool");
+    }
+}
+
+void SPIRVSimulator::Op_LogicalAnd(const Instruction& instruction){
+    /*
+    OpLogicalAnd
+
+    Result is true if both Operand 1 and Operand 2 are true. Result is false if either Operand 1 or Operand 2 are false.
+    Result Type must be a scalar or vector of Boolean type.
+    The type of Operand 1 must be the same as Result Type.
+    The type of Operand 2 must be the same as Result Type.
+
+    Results are computed per component.
+    */
+    assert(instruction.opcode == spv::Op::OpLogicalAnd);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t operand1_id = instruction.words[3];
+    uint32_t operand2_id = instruction.words[4];
+
+    const Type& type = types_.at(type_id);
+    const Value& operand1 = GetValue(operand1_id);
+    const Value& operand2 = GetValue(operand2_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(operand1), "SPIRV simulator: Invalid value type for operand 1, must be vector when using vector type");
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(operand2), "SPIRV simulator: Invalid value type for operand 2, must be vector when using vector type");
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(operand1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(operand2);
+
+        assertm (std::holds_alternative<uint64_t>(vec1->elems[0]), "SPIRV simulator: Invalid vector component value for operand 1, must be bool");
+        assertm (std::holds_alternative<uint64_t>(vec2->elems[0]), "SPIRV simulator: Invalid vector component value for operand 2, must be bool");
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            result_vec->elems.push_back((uint64_t)(std::get<uint64_t>(vec1->elems[i]) && std::get<uint64_t>(vec2->elems[i])));
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::BoolT){
+        assertm (std::holds_alternative<uint64_t>(operand1), "SPIRV simulator: Invalid value for operand 1, must be bool");
+        assertm (std::holds_alternative<uint64_t>(operand2), "SPIRV simulator: Invalid value for operand 2, must be bool");
+        Value result = (uint64_t)(std::get<uint64_t>(operand1) && std::get<uint64_t>(operand2));
+
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type, must be vector or bool");
+    }
+}
+
+void SPIRVSimulator::Op_MatrixTimesMatrix(const Instruction& instruction){
+    /*
+    OpMatrixTimesMatrix
+
+    Linear-algebraic multiply of LeftMatrix X RightMatrix.
+    Result Type must be an OpTypeMatrix whose Column Type is a vector of floating-point type.
+    LeftMatrix must be a matrix whose Column Type is the same as the Column Type in Result Type.
+    RightMatrix must be a matrix with the same Component Type as the Component Type in Result Type.
+    Its number of columns must equal the number of columns in Result Type.
+    Its columns must have the same number of components as the number of columns in LeftMatrix.
+    */
+    assert(instruction.opcode == spv::Op::OpMatrixTimesMatrix);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t matrix_left_id = instruction.words[3];
+    uint32_t matrix_right_id = instruction.words[4];
+
+    const Type& type = types_.at(type_id);
+    const Type& left_type = GetType(matrix_left_id);
+    const Type& right_type = GetType(matrix_right_id);
+
+    assertm (type.kind == Type::Kind::Matrix, "SPIRV simulator: Result operand is not a matrix");
+    assertm (left_type.kind == Type::Kind::Matrix, "SPIRV simulator: First operand is not a matrix");
+    assertm (right_type.kind == Type::Kind::Matrix, "SPIRV simulator: Second operand is not a matrix");
+
+    const Type& left_col_type = GetType(left_type.matrix.col_type_id);
+    assertm (left_col_type.kind == Type::Kind::Vector, "SPIRV simulator: Left matrix col type is not vector");
+
+    const std::shared_ptr<MatrixV>& matrix_left = std::get<std::shared_ptr<MatrixV>>(GetValue(matrix_left_id));
+    const std::shared_ptr<MatrixV>& matrix_right = std::get<std::shared_ptr<MatrixV>>(GetValue(matrix_right_id));
+
+    assertm (type.matrix.col_count == matrix_right->cols.size(), "SPIRV simulator: Second operand matrix number of columns dont match the result type");
+
+    std::shared_ptr<MatrixV> result_matrix = std::make_shared<MatrixV>();
+
+    for (uint32_t right_col_index = 0; right_col_index < matrix_right->cols.size(); ++right_col_index){
+        const auto& right_col_vec = std::get<std::shared_ptr<VectorV>>(matrix_right->cols[right_col_index]);
+
+        std::vector<double> tmp_result;
+        tmp_result.resize(left_col_type.vector.elem_count);
+
+        for (uint32_t left_col_index = 0; left_col_index < matrix_left->cols.size(); ++left_col_index){
+            assertm (std::holds_alternative<std::shared_ptr<VectorV>>(matrix_left->cols[left_col_index]), "SPIRV simulator: Non-vector column value found in matrix operand");
+            assertm (std::holds_alternative<double>(right_col_vec->elems[left_col_index]), "SPIRV simulator: Non-floating point value found in vector operand");
+
+            const std::shared_ptr<VectorV>& left_col_vector = std::get<std::shared_ptr<VectorV>>(matrix_left->cols[left_col_index]);
+
+            for (uint32_t row_index = 0; row_index < left_col_vector->elems.size(); ++row_index){
+                assertm (std::holds_alternative<double>(left_col_vector->elems[row_index]), "SPIRV simulator: Non-floating point value found in column vector operand");
+                tmp_result[row_index] += std::get<double>(left_col_vector->elems[row_index]) * std::get<double>(right_col_vec->elems[left_col_index]);
+            }
+        }
+
+        std::shared_ptr<VectorV> new_column = std::make_shared<VectorV>();
+        for (auto col_val : tmp_result){
+            new_column->elems.push_back(col_val);
+        }
+        result_matrix->cols.push_back(new_column);
+    }
+
+    SetValue(result_id, result_matrix);
+}
+
+void SPIRVSimulator::Op_IsNan(const Instruction& instruction){
+    /*
+    OpIsNan
+
+    Result is true if x is a NaN for the floating-point encoding used by the type of x, otherwise result is false.
+
+    Result Type must be a scalar or vector of Boolean type.
+
+    x must be a scalar or vector of floating-point type. It must have the same number of components as Result Type.
+
+    Results are computed per component.
+    */
+    assert(instruction.opcode == spv::Op::OpIsNan);
+
+    //uint32_t type_id = instruction.words[1];
+    //uint32_t result_id = instruction.words[2];
+    //uint32_t x_id = instruction.words[3];
+
+    assertx ("SPIRV simulator: Op_IsNan not implemented yet");
 }
 
 void SPIRVSimulator::Op_ImageFetch(const Instruction& instruction){
