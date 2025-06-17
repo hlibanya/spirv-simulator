@@ -162,6 +162,8 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpBitwiseOr,              [this](const Instruction& i){Op_BitwiseOr(i);});
     R(spv::Op::OpBitwiseAnd,             [this](const Instruction& i){Op_BitwiseAnd(i);});
     R(spv::Op::OpSwitch,                 [this](const Instruction& i){Op_Switch(i);});
+    R(spv::Op::OpAll,                    [this](const Instruction& i){Op_All(i);});
+    R(spv::Op::OpAny,                    [this](const Instruction& i){Op_Any(i);});
 }
 
 void SPIRVSimulator::CheckOpcodeSupport(){
@@ -631,6 +633,10 @@ uint32_t SPIRVSimulator::GetDecoratorLiteral(uint32_t result_id, uint32_t member
 }
 
 Type SPIRVSimulator::GetType(uint32_t result_id) const{
+    /*
+    Returns the type struct mapping to a given result_id.
+    result_id must be the result ID of a spirv instruction.
+    */
     assertm (result_id_to_inst_index_.find(result_id) != result_id_to_inst_index_.end(), "SPIRV simulator: No instruction found for result_id");
 
     size_t instruction_index = result_id_to_inst_index_.at(result_id);
@@ -4503,7 +4509,7 @@ void SPIRVSimulator::Op_Switch(const Instruction& instruction){
     } else if (std::holds_alternative<int64_t>(selector_value)){
         selector = (uint64_t)std::get<int64_t>(selector_value);
     } else {
-        assertx ("SPIRV simulator: Selector value in Op_Switch is not an integer");
+        assertx ("SPIRV simulator: Selector value is not an integer");
     }
 
     const Type& type = GetType(selector_id);
@@ -4542,9 +4548,9 @@ void SPIRVSimulator::Op_MatrixTimesVector(const Instruction& instruction){
     uint32_t vector_id = instruction.words[4];
 
     const Type& type = GetType(type_id);
-    assertm (type.kind == Type::Kind::Vector, "SPIRV simulator: Result operand in Op_MatrixTimesVector is not a vector");
-    assertm (GetType(matrix_id).kind == Type::Kind::Matrix, "SPIRV simulator: First operand in Op_MatrixTimesVector is not a matrix");
-    assertm (GetType(vector_id).kind == Type::Kind::Vector, "SPIRV simulator: First operand in Op_MatrixTimesVector is not a vector");
+    assertm (type.kind == Type::Kind::Vector, "SPIRV simulator: Result operand is not a vector");
+    assertm (GetType(matrix_id).kind == Type::Kind::Matrix, "SPIRV simulator: First operand is not a matrix");
+    assertm (GetType(vector_id).kind == Type::Kind::Vector, "SPIRV simulator: Second operand is not a vector");
 
     const std::shared_ptr<VectorV>& vector = std::get<std::shared_ptr<VectorV>>(GetValue(vector_id));
     const std::shared_ptr<MatrixV>& matrix = std::get<std::shared_ptr<MatrixV>>(GetValue(matrix_id));
@@ -4554,11 +4560,11 @@ void SPIRVSimulator::Op_MatrixTimesVector(const Instruction& instruction){
 
     for (uint32_t col_index = 0; col_index < matrix->cols.size(); ++col_index){
         for (uint32_t row_index = 0; row_index < type.vector.elem_count; ++row_index){
-            assertm (std::holds_alternative<std::shared_ptr<VectorV>>(matrix->cols[col_index]), "SPIRV simulator: Non-vector column value found in matrix operand of Op_MatrixTimesVector");
-            assertm (std::holds_alternative<double>(vector->elems[row_index]), "SPIRV simulator: Non-floating point value found in vector operand of Op_MatrixTimesVector");
+            assertm (std::holds_alternative<std::shared_ptr<VectorV>>(matrix->cols[col_index]), "SPIRV simulator: Non-vector column value found in matrix operand");
+            assertm (std::holds_alternative<double>(vector->elems[row_index]), "SPIRV simulator: Non-floating point value found in vector operand");
 
             const std::shared_ptr<VectorV>& col_vector = std::get<std::shared_ptr<VectorV>>(matrix->cols[col_index]);
-            assertm (std::holds_alternative<double>(col_vector->elems[row_index]), "SPIRV simulator: Non-floating point value found in column vector operand of Op_MatrixTimesVector");
+            assertm (std::holds_alternative<double>(col_vector->elems[row_index]), "SPIRV simulator: Non-floating point value found in column vector operand");
 
             tmp_result[row_index] += std::get<double>(col_vector->elems[row_index]) * std::get<double>(vector->elems[col_index]);
         }
@@ -4598,13 +4604,13 @@ void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction){
     uint32_t vec1_id = instruction.words[3];
     uint32_t vec2_id = instruction.words[4];
 
-    assertm (types_.at(type_id).kind == Type::Kind::Vector, "SPIRV simulator: Non-vector result type in OpVectorShuffle");
+    assertm (types_.at(type_id).kind == Type::Kind::Vector, "SPIRV simulator: Non-vector result type");
 
     const Value& vector1_val = GetValue(vec1_id);
     const Value& vector2_val = GetValue(vec2_id);
 
-    assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector1_val), "SPIRV simulator: Non-vector value in vector operand 1 in Op_VectorShuffle");
-    assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector2_val), "SPIRV simulator: Non-vector value in vector operand 2 in Op_VectorShuffle");
+    assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector1_val), "SPIRV simulator: Non-vector value in vector operand 1");
+    assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector2_val), "SPIRV simulator: Non-vector value in vector operand 2");
 
     const std::shared_ptr<VectorV>& vector1 = std::get<std::shared_ptr<VectorV>>(vector1_val);
     const std::shared_ptr<VectorV>& vector2 = std::get<std::shared_ptr<VectorV>>(vector2_val);
@@ -4615,7 +4621,7 @@ void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction){
 
     std::shared_ptr<VectorV> result = std::make_shared<VectorV>();
     for (uint32_t literal_index = 5; literal_index < instruction.word_count; ++literal_index){
-        assertm (literal_index < values.size(), "SPIRV simulator: Literal index OOB in OpVectorShuffle");
+        assertm (literal_index < values.size(), "SPIRV simulator: Literal index OOB");
 
         if (literal_index == 0xFFFFFFFF){
             Value undef_val = (uint64_t)0xFFFFFFFF;
@@ -4837,7 +4843,90 @@ void SPIRVSimulator::Op_BitwiseAnd(const Instruction& instruction){
     }
 }
 
+void SPIRVSimulator::Op_All(const Instruction& instruction){
+    /*
+    OpAll
+
+    Result is true if all components of Vector are true, otherwise result is false.
+
+    Result Type must be a Boolean type scalar.
+
+    Vector must be a vector of Boolean type.
+    */
+    assert(instruction.opcode == spv::Op::OpAll);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t vector_id = instruction.words[3];
+
+    const Type& type = GetType(type_id);
+    const Value& vector_val = GetValue(vector_id);
+
+    assertm (type.kind == Type::Kind::Vector, "SPIRV simulator: Operand is not of vector type");
+    assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector_val), "SPIRV simulator: Operand is of vector type but does not hold a vector");
+
+    const std::shared_ptr<VectorV>& vec = std::get<std::shared_ptr<VectorV>>(vector_val);
+
+    bool result_bool = true;
+    for (const auto& bool_val : vec->elems){
+        result_bool = result_bool && (bool)std::get<uint64_t>(bool_val);
+    }
+
+    Value result = (uint64_t)result_bool;
+    SetValue(result_id, result);
+}
+
+
+void SPIRVSimulator::Op_Any(const Instruction& instruction){
+    /*
+    OpAny
+
+    Result is true if any component of Vector is true, otherwise result is false.
+
+    Result Type must be a Boolean type scalar.
+
+    Vector must be a vector of Boolean type.
+    */
+    assert(instruction.opcode == spv::Op::OpAny);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t vector_id = instruction.words[3];
+
+    const Type& type = GetType(type_id);
+    const Value& vector_val = GetValue(vector_id);
+
+    assertm (type.kind == Type::Kind::Vector, "SPIRV simulator: Operand is not of vector type");
+    assertm (std::holds_alternative<std::shared_ptr<VectorV>>(vector_val), "SPIRV simulator: Operand is of vector type but does not hold a vector");
+
+    const std::shared_ptr<VectorV>& vec = std::get<std::shared_ptr<VectorV>>(vector_val);
+
+    bool result_bool = false;
+    for (const auto& bool_val : vec->elems){
+        result_bool = result_bool || (bool)std::get<uint64_t>(bool_val);
+    }
+
+    Value result = (uint64_t)result_bool;
+    SetValue(result_id, result);
+}
+
 void SPIRVSimulator::Op_ImageFetch(const Instruction& instruction){
+    /*
+    OpImageFetch
+
+    Fetch a single texel from an image whose Sampled operand is 1.
+
+    Result Type must be a vector of four components of floating-point type or integer type.
+    Its components must be the same as Sampled Type of the underlying OpTypeImage
+    (unless that underlying Sampled Type is OpTypeVoid).
+
+    Image must be an object whose type is OpTypeImage. Its Dim operand must not be Cube, and its Sampled operand must be 1.
+
+    Coordinate must be a scalar or vector of integer type. It contains (u[, v] …​ [, array layer]) as needed
+    by the definition of Sampled Image.
+
+    Image Operands encodes what operands follow, as per Image Operands.
+    */
     assert(instruction.opcode == spv::Op::OpImageFetch);
     assertx ("SPIRV simulator: Op_ImageFetch is currently unimplemented");
 }

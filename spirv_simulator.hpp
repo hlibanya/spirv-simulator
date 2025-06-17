@@ -373,7 +373,7 @@ private:
     Value CopyValue(const Value& value) const;
     std::unordered_map<uint32_t,Value>& Heap(uint32_t sc){ return heaps_[sc]; }
 
-    // Opcode handlers, 95/498 implemented for SPIRV 1.6
+    // Opcode handlers, 96/498 implemented for SPIRV 1.6
     void T_Void(const Instruction&);
     void T_Bool(const Instruction&);
     void T_Int(const Instruction&);
@@ -470,6 +470,8 @@ private:
     void Op_BitwiseOr(const Instruction&);
     void Op_BitwiseAnd(const Instruction&);
     void Op_Switch(const Instruction&);
+    void Op_All(const Instruction&);
+    void Op_Any(const Instruction&);
 };
 
 }
