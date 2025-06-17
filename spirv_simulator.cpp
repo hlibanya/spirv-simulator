@@ -36,8 +36,6 @@ SPIRVSimulator::SPIRVSimulator(const std::vector<uint32_t>& program_words, const
     DecodeHeader();
     RegisterOpcodeHandlers();
     CheckOpcodeSupport();
-    ParseAll();
-    Validate();
 }
 
 void SPIRVSimulator::DecodeHeader(){
@@ -190,21 +188,29 @@ void SPIRVSimulator::CheckOpcodeSupport(){
             uint32_t set_id = program_words_[current_word + 3];
             uint32_t instruction_literal = program_words_[current_word + 4];
 
-            std::cout << execIndent << "Found OpExtInst instruction with set ID: " << set_id << ", instruction literal: " << instruction_literal << std::endl;
+            if (verbose_){
+                std::cout << execIndent << "Found OpExtInst instruction with set ID: " << set_id << ", instruction literal: " << instruction_literal << std::endl;
+            }
         }
 
         current_word += word_count;
     }
 
     if (!unimplemented_opcodes.empty()){
-        std::cout << "SPIRV simulator: Unimplemented OpCodes detected:" << std::endl;
-        for (auto it = unimplemented_opcodes.begin(); it != unimplemented_opcodes.end(); ++it){
-            std::cout << execIndent << spv::OpToString(*it) << std::endl;
+        if (verbose_){
+            std::cout << "SPIRV simulator: Unimplemented OpCodes detected:" << std::endl;
         }
-
-        assertx ("SPIRV simulator: Unhandled opcodes detected, implement them to continue!");
+        for (auto it = unimplemented_opcodes.begin(); it != unimplemented_opcodes.end(); ++it){
+            if (verbose_){
+                std::cout << execIndent << spv::OpToString(*it) << std::endl;
+            }
+            unsupported_opcodes.insert(spv::OpToString(*it));
+        }
     }
-    std::cout << std::endl;
+
+    if (verbose_){
+        std::cout << std::endl;
+    }
 }
 
 void SPIRVSimulator::Validate(){
@@ -293,6 +299,11 @@ void SPIRVSimulator::ParseAll(){
 }
 
 void SPIRVSimulator::Run(){
+    assertm (unsupported_opcodes.size() == 0, "SPIRV simulator: Unhandled opcodes detected, implement them to run!");
+
+    ParseAll();
+    Validate();
+
     std::cout << std::endl;
 
     if(funcs_.empty()){
@@ -393,7 +404,7 @@ void SPIRVSimulator::Run(){
     }
 }
 
-void SPIRVSimulator::void WriteOutputs(){
+void SPIRVSimulator::WriteOutputs(){
     assertx ("SPIRV simulator: Value writeout not implemented yet");
 }
 

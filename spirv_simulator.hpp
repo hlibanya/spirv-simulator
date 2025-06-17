@@ -250,6 +250,8 @@ public:
 
     const std::vector<PhysicalAddressData>& GetPhysicalAddressData() const {return physical_address_pointer_source_data_;}
 
+    std::set<std::string> unsupported_opcodes;
+
 private:
     // Used to create object id's for entries not created by a spirv instruction
     uint32_t next_external_id_ = 0;
