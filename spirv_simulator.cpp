@@ -5632,10 +5632,10 @@ void SPIRVSimulator::Op_IsNan(const Instruction& instruction){
     uint32_t result_id = instruction.words[2];
     uint32_t x_id = instruction.words[3];
 
-    std::cout << execIndent << "WARNING: OpIsNan executed, keep this in mind if you see broken behaviour here"
+    std::cout << execIndent << "WARNING: OpIsNan executed, keep this in mind if you see broken behaviour here" << std::endl;
 
     const Type& type = types_.at(type_id);
-    const Value& x_val = GetValue(operand1_id);
+    const Value& x_val = GetValue(x_id);
 
     if (type.kind == Type::Kind::Vector){
         Value result = std::make_shared<VectorV>();
