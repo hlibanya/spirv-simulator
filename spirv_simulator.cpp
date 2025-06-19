@@ -5605,11 +5605,61 @@ void SPIRVSimulator::Op_IsNan(const Instruction& instruction){
     */
     assert(instruction.opcode == spv::Op::OpIsNan);
 
-    //uint32_t type_id = instruction.words[1];
-    //uint32_t result_id = instruction.words[2];
-    //uint32_t x_id = instruction.words[3];
+    /*
+    Floats are guaranteed to be nan under the following conditions GPU side:
 
-    assertx ("SPIRV simulator: Op_IsNan not implemented yet");
+        Case                   Guaranteed NaN on GPU?        Notes
+           0.0 / 0.0              ✅                            Division by zero with zero numerator
+           sqrt(x < 0)            ✅                            May be clamped under fast math (only in strict mode)
+           log(x <= 0)            ✅                            log(0) = -Inf; log(x < 0) = NaN
+           asin(x > 1 or < -1)    ✅                            Domain violation
+           acos(x > 1 or < -1)    ✅                            Domain violation
+           Arithmetic on NaN      ✅                            Follows IEEE NaN propagation
+
+    For other cases, the results are not guaranteed and we can do whatever we want.
+
+    Still this stuff is chaotic due to the large amount of slack compilers have here,
+    results can be undefined or take multiple values in practice for many operations so always print a
+    warning when we encounter this instruction.
+
+    Also, C++ math functions can do a lot of wild stuff here, but apart from the operands above there are no guarantees GPU
+    side either so we should be good.
+
+    NOTE: We should investigate this carefully and in depth if we ever see broken behaviour in applications that use
+    OpIsNan.
+    */
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t x_id = instruction.words[3];
+
+    std::cout << execIndent << "WARNING: OpIsNan executed, keep this in mind if you see broken behaviour here"
+
+    const Type& type = types_.at(type_id);
+    const Value& x_val = GetValue(operand1_id);
+
+    if (type.kind == Type::Kind::Vector){
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        assertm (std::holds_alternative<std::shared_ptr<VectorV>>(x_val), "SPIRV simulator: Invalid value type for operand 1, must be vector when using vector type");
+
+        auto x_vec = std::get<std::shared_ptr<VectorV>>(x_val);
+
+        assertm (std::holds_alternative<double>(x_vec->elems[0]), "SPIRV simulator: Invalid vector component value for operand 1, must be bool");
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+            result_vec->elems.push_back((uint64_t)(std::isnan(std::get<double>(x_vec->elems[i]))));
+        }
+
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::BoolT){
+        assertm (std::holds_alternative<double>(x_val), "SPIRV simulator: Invalid value for operand 1, must be bool");
+        Value result = (uint64_t)(std::isnan(std::get<double>(x_val)));
+
+        SetValue(result_id, result);
+    } else {
+        assertx ("SPIRV simulator: Invalid result type, must be vector or bool");
+    }
 }
 
 void SPIRVSimulator::Op_ImageFetch(const Instruction& instruction){
