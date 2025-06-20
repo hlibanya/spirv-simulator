@@ -44,6 +44,8 @@ Before compiling, if this is not set it will use the spirv.hpp file instead.
 
 ## Execution framework (WIP)
 
+The main files of interest are spirv_simulator.hpp and spirv_simulator.cpp, they contain all the relevant code.
+
 The main framework is implemented in the SPIRVSimulator class and the InputData class.
 
 It can be used as follows:
@@ -60,6 +62,44 @@ sim.Run();
 auto physical_address_data = sim.GetPhysicalAddressData();
 <Work with the outputs here>
 ```
+
+### Populating the inputs (WIP)
+
+The input structure has the following format:
+
+```
+struct InputData{
+    uint32_t entry_point_id = 0;
+    std::string entry_point_op_name = "";
+
+    std::unordered_map<uint64_t, std::pair<size_t, size_t>> rt_array_lengths;
+    std::unordered_map<uint32_t, size_t> specialization_constant_offsets;
+    void* specialization_constants = nullptr;
+    void* push_constants = nullptr;
+    std::unordered_map<uint64_t, std::unordered_map<uint64_t, void*>> bindings;
+    std::unordered_map<uint64_t, std::pair<size_t, void*>> physical_address_buffers;
+};
+```
+
+And each shader input should be mapped to a compatible member in the input structure.
+
+entry_point_op_name should be set to the name of the entry point in the shader.
+
+entry_point_id is optional, and will be ignored if entry_point_op_name. It represents the result ID of a OpEntryPoint instruction.
+
+specialization_constants should be set to a pointer to the full spec constant block.
+
+specialization_constant_offsets should contain one entry per spec constant in the shader.
+The key should be the SpecId matching the specialization constant ID as defined by the API.
+The offset value is the offset (in bytes) into the specialization_constants pointer where the given spec constant value can be found.
+
+push_constants should be set to a pointer to the full push constant block.
+
+bindings should contain a key for each descriptorset ID, then for each key one map value mapping binding ID's to pointers that point to the full host side data block for the given binding.
+
+physical_address_buffers should contain a uint64_t key which represents the physical address buffer pointer cast (in a manner that preserves the bit pattern) to a 64 bit unsigned integer. The value should be a pair, where the first entry is the size of the buffer in bytes, and the second value is a pointer to the host side memory containing all the values in the buffer.
+
+rt_array_lengths should contain a uint64_t key which represents the host side pointer to the runtime array buffer cast (in a manner that preserves the bit pattern) to a 64 bit unsigned integer. The value should be a pair, where the first entry is the offset into the buffer pointer stored in the uint64_t key to the point where the runtime array can be found. The second entry is the array length (in bytes).
 
 
 ## Framework details (WIP)
@@ -122,5 +162,7 @@ For accessing allocated data through pointers, Deref(PointerV) can be used, the 
 Then you should implement the member function so that it performs/simulates the operations performed by the SPIRV instruction matching the given OpCode.
 
 If the instruction has a result ID, then it needs to write the result Value to the given result ID using SetValue(...).
+
+If the instruction reads or writes to pointers, it needs to use the Deref(...) method to access the correct heap (see Op_Load and Op_Store for examples).
 
 See the existing OpCode implementations in spirv_simulator.cpp for examples.
