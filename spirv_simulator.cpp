@@ -20,6 +20,12 @@ const std::string execIndent = "                  # ";
 
 
 void DecodeInstruction(std::span<const uint32_t>& program_words, Instruction& instruction){
+    /*
+    Decodes an instruction from the given span stream.
+
+    Will update the input stream so it points to the start of the next opcode.
+    The results are written to the input instruction.
+    */
     uint32_t first = program_words.front();
     instruction.word_count = first >> kWordCountShift;
     instruction.opcode = (spv::Op)(first & kOpcodeMask);
@@ -61,6 +67,9 @@ void SPIRVSimulator::DecodeHeader(){
 }
 
 void SPIRVSimulator::RegisterOpcodeHandlers(){
+    /*
+    New opcode implementations must be registered here.
+    */
     auto R = [this](spv::Op op, DispatcherType f){
         opcode_dispatchers_[op] = std::move(f);
     };
@@ -182,6 +191,9 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
 }
 
 void SPIRVSimulator::CheckOpcodeSupport(){
+    /*
+    Verifies that all opcodes in the instructions in the input shaders have a registered handled in RegisterOpcodeHandlers.
+    */
     // Check that program_words_ has not been messed with
     uint32_t magic_number = program_words_[0];
     assertm (magic_number == 0x07230203, "SPIRV simulator: Magic SPIRV header number wrong, should be: 0x07230203");
@@ -231,6 +243,9 @@ void SPIRVSimulator::CheckOpcodeSupport(){
 }
 
 void SPIRVSimulator::Validate(){
+    /*
+    Do some early sanity checking and validation.
+    */
     // TODO: Expand this (a lot)
     for(auto &[id, t] : types_){
 
@@ -576,6 +591,9 @@ void SPIRVSimulator::PrintInstruction(const Instruction& instruction){
 }
 
 bool SPIRVSimulator::HasDecorator(uint32_t result_id, spv::Decoration decorator){
+    /*
+    Checks if a result_id has been decorated with the given decoration.
+    */
     if (decorators_.find(result_id) != decorators_.end()){
         for (const auto& decorator_data : decorators_.at(result_id)){
             if (decorator == decorator_data.kind){
@@ -590,6 +608,9 @@ bool SPIRVSimulator::HasDecorator(uint32_t result_id, spv::Decoration decorator)
 }
 
 bool SPIRVSimulator::HasDecorator(uint32_t result_id, uint32_t member_id, spv::Decoration decorator){
+    /*
+    Checks if a given member in a result_id has been decorated with the given decoration.
+    */
     if (struct_decorators_.find(result_id) != struct_decorators_.end()){
         if (struct_decorators_.at(result_id).find(member_id) != struct_decorators_.at(result_id).end()){
             for (const auto& decorator_data : struct_decorators_.at(result_id).at(member_id)){
@@ -681,6 +702,12 @@ Type SPIRVSimulator::GetType(uint32_t result_id) const{
 // ---------------------------------------------------------------------------
 
 size_t SPIRVSimulator::GetBitizeOfType(uint32_t type_id){
+    /*
+    Returns the full bitsize of the type associated with the given type ID.
+    type_id must be the result of a OpType* instruction.
+    */
+    assertm (types_.find(type_id) != types_.end(), "SPIRV simulator: No valid type for the given ID was found");
+
     const Type& type = types_.at(type_id);
 
     assertm (type.kind != Type::Kind::Void, "SPIRV simulator: Attempt to extract size of a void type");
@@ -723,6 +750,12 @@ size_t SPIRVSimulator::GetBitizeOfType(uint32_t type_id){
 }
 
 size_t SPIRVSimulator::GetBitizeOfTargetType(const PointerV& pointer){
+    /*
+    Returns the full bitsize of the type pointed to by the given pointer.
+    The pointers type_id field must be the result of a OpType* instruction.
+    */
+    assertm (types_.find(pointer.type_id) != types_.end(), "SPIRV simulator: No valid type for the given pointer type ID was found");
+
     const Type* type = &types_.at(pointer.type_id);
 
     uint32_t type_id = type->pointer.pointee_type_id;
@@ -754,6 +787,9 @@ size_t SPIRVSimulator::GetBitizeOfTargetType(const PointerV& pointer){
 }
 
 void SPIRVSimulator::GetBaseTypeIDs(uint32_t type_id, std::vector<uint32_t>& output){
+    /*
+    Gets all the scalar types in a compond types, laid out as they are in memory.
+    */
     const Type& type = types_.at(type_id);
 
     assertm (type.kind != Type::Kind::Void, "SPIRV simulator: Attempt to extract size of a void type");
@@ -921,6 +957,9 @@ uint64_t SPIRVSimulator::GetPointerOffset(const PointerV& pointer_value){
 }
 
 uint32_t SPIRVSimulator::GetTypeID(uint32_t result_id) const{
+    /*
+    Given a result ID, return the type ID of the value it maps to.
+    */
     assertm (result_id_to_inst_index_.find(result_id) != result_id_to_inst_index_.end(), "SPIRV simulator: No instruction found for result_id");
 
     size_t instruction_index = result_id_to_inst_index_.at(result_id);

@@ -81,6 +81,8 @@ struct InputData{
 };
 ```
 
+The format of the data must be what the shader expects, eg. if a buffer is bound to a binding with the std430 layout, the data in the byte vectors must obey the rules of that layout.
+
 And each shader input should be mapped to a compatible member in the input structure.
 
 entry_point_op_name should be set to the name of the entry point in the shader.
