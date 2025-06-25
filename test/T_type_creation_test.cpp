@@ -32,7 +32,8 @@ static std::vector<uint32_t> ReadFile(const std::string &path){
 
 const char* input_test_file = "../test_shaders/vulkan_type_creation.spirv";
 
-struct SimulatorSetup{
+struct SimulatorSetup
+{
 	SimulatorSetup(){
 		sim = std::make_unique<SPIRVSimulator::SPIRVSimulator>(ReadFile(input_test_file), inputs, false);
 		sim->Run();
@@ -42,10 +43,20 @@ struct SimulatorSetup{
 	std::unique_ptr<SPIRVSimulator::SPIRVSimulator> sim;
 };
 
-TEST_CASE_METHOD(SimulatorSetup,"1: Declaring an main function that returns \"void\" should create a \"void\" type","[single-file]"){
-	const auto & types = sim->GetTypes();
+static SimulatorSetup setup;
+
+TEST_CASE("1: Declaring an main function that returns \"void\" should create a \"void\" type","[single-file]")
+{
+	const auto & types = setup.sim->GetTypes();
 	auto result = std::find_if(types.begin(),types.end(),[](const std::pair<uint32_t, SPIRVSimulator::Type>& entry){ return entry.second.kind == SPIRVSimulator::Type::Kind::Void;});
 	REQUIRE(result != types.end());
 	REQUIRE(result->second.scalar.is_signed == false);
 	REQUIRE(result->second.scalar.width == 0);
+}
+
+TEST_CASE("2: Declaring an \"int\" variable should create an \"int\" type","[single-file]")
+{
+	const auto & types = setup.sim->GetTypes();
+	auto result = std::find_if(types.begin(),types.end(),[](const std::pair<uint32_t, SPIRVSimulator::Type>& entry){ return entry.second.kind == SPIRVSimulator::Type::Kind::Int;});
+	REQUIRE(result != types.end());
 }
