@@ -9,8 +9,8 @@ project(spirv_simulator)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(SOURCE_FILES ${CMAKE_SOURCE_DIR}/spirv_simulator.cpp)
-set(HEADER_FILES ${CMAKE_SOURCE_DIR}/spirv_simulator.hpp ${CMAKE_SOURCE_DIR}/spirv.hpp)
+set(SOURCE_FILES ${CMAKE_SOURCE_DIR}/spirv_simulator.cpp ${CMAKE_SOURCE_DIR}/util.cpp)
+set(HEADER_FILES ${CMAKE_SOURCE_DIR}/spirv_simulator.hpp ${CMAKE_SOURCE_DIR}/spirv.hpp ${CMAKE_SOURCE_DIR}/util.hpp)
 
 add_executable(spirv_simulator ${SOURCE_FILES} ${HEADER_FILES} ${CMAKE_SOURCE_DIR}/main.cpp)
 target_compile_options(spirv_simulator PRIVATE -Wall -Wextra -Wpedantic -Wshadow -std=c++20 -fno-fast-math)
