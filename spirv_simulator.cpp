@@ -1359,7 +1359,7 @@ Value& SPIRVSimulator::Deref(const PointerV &ptr){
 }
 
 Value& SPIRVSimulator::GetValue(uint32_t result_id){
-    for (auto riter = call_stack_.rbegin(); riter != call_stack_.rend(); ++riter) { 
+    for (auto riter = call_stack_.rbegin(); riter != call_stack_.rend(); ++riter) {
         if (riter->locals.find(result_id) != riter->locals.end()){
             return riter->locals.at(result_id);
         }
@@ -3651,7 +3651,7 @@ void SPIRVSimulator::Op_IMul(const Instruction& instruction){
         assertm ((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count), "SPIRV simulator: Operands not of equal/correct length in Op_IMul");
 
         for (uint32_t i = 0; i < type.vector.elem_count; ++i){
-            uint64_t elem_result;
+            Value elem_result;
 
             if(std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])){
                 elem_result = (std::get<uint64_t>(vec1->elems[i]) * std::get<uint64_t>(vec2->elems[i]));
@@ -5415,7 +5415,7 @@ void SPIRVSimulator::Op_SDiv(const Instruction& instruction){
 
 void SPIRVSimulator::Op_SNegate(const Instruction& instruction){
     /*
-    
+
     OpSNegate
 
     Signed-integer subtract of Operand from zero.
