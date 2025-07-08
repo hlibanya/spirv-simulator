@@ -10,7 +10,7 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
-set(SOURCE_FILES arithmetic_test.cpp)
+set(SOURCE_FILES arithmetic_test.cpp testing_common.cpp)
 set(HEADER_FILES testing_common.hpp)
 
 add_executable(arithmetic_test)

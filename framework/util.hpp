@@ -9,7 +9,7 @@
 
 namespace util
 {
-	std::vector<uint32_t> ReadFile(const std::string &path);
+std::vector<uint32_t> ReadFile(const std::string& path);
 }
 
 #endif
