@@ -2453,7 +2453,7 @@ void SPIRVSimulator::Op_IAdd(const Instruction& instruction){
     uint32_t type_id = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = types_.at(type_id);
+    const Type type = GetType(type_id);
 
     if (type.kind == Type::Kind::Vector){
         Value result = std::make_shared<VectorV>();
