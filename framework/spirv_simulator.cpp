@@ -645,7 +645,8 @@ void SPIRVSimulator::PrintInstruction(const Instruction& instruction)
             bool has_type_value = types_.find(instruction.words[1]) != types_.end();
             if (has_type_value)
             {
-                result_and_type << GetTypeString(GetType(instruction.words[1])) << "(" << instruction.words[1] << ") ";
+                result_and_type << GetTypeString(GetTypeByResultId(instruction.words[1])) << "(" << instruction.words[1]
+                                << ") ";
             }
         }
 
@@ -668,7 +669,7 @@ void SPIRVSimulator::PrintInstruction(const Instruction& instruction)
         else if (instruction.opcode == spv::Op::OpTypePointer)
         {
             std::cout << spv::StorageClassToString((spv::StorageClass)instruction.words[2]) << " "
-                      << GetTypeString(GetType(instruction.words[3])) << "(" << instruction.words[3] << ") ";
+                      << GetTypeString(GetTypeByResultId(instruction.words[3])) << "(" << instruction.words[3] << ") ";
         }
         else if (instruction.opcode == spv::Op::OpVariable)
         {
@@ -825,7 +826,7 @@ uint32_t SPIRVSimulator::GetDecoratorLiteral(uint32_t        result_id,
     assertx("SPIRV simulator: Not decorators for struct member");
 }
 
-Type SPIRVSimulator::GetType(uint32_t result_id) const
+Type SPIRVSimulator::GetTypeByResultId(uint32_t result_id) const
 {
     /*
     Returns the type struct mapping to a given result_id.
@@ -856,6 +857,14 @@ Type SPIRVSimulator::GetType(uint32_t result_id) const
     }
 }
 
+Type SPIRVSimulator::GetTypeByTypeId(uint32_t type_id) const
+{
+    /*
+    Returns the type struct mapping to a given type_id.
+    */
+    return types_.at(type_id);
+}
+
 // ---------------------------------------------------------------------------
 //  Value creation and inspect helpers
 // ---------------------------------------------------------------------------
@@ -868,7 +877,7 @@ size_t SPIRVSimulator::GetBitizeOfType(uint32_t type_id)
     */
     assertm(types_.find(type_id) != types_.end(), "SPIRV simulator: No valid type for the given ID was found");
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     assertm(type.kind != Type::Kind::Void, "SPIRV simulator: Attempt to extract size of a void type");
 
@@ -933,10 +942,10 @@ size_t SPIRVSimulator::GetBitizeOfTargetType(const PointerV& pointer)
     assertm(types_.find(pointer.type_id) != types_.end(),
             "SPIRV simulator: No valid type for the given pointer type ID was found");
 
-    Type type = GetType(pointer.type_id);
+    Type type = GetTypeByResultId(pointer.type_id);
 
     uint32_t type_id = type.pointer.pointee_type_id;
-    type             = GetType(type_id);
+    type             = GetTypeByTypeId(type_id);
     for (uint32_t idx : pointer.idx_path)
     {
         if (type.kind == Type::Kind::Struct)
@@ -944,27 +953,27 @@ size_t SPIRVSimulator::GetBitizeOfTargetType(const PointerV& pointer)
             assertm(struct_members_.find(type_id) != struct_members_.end(), "SPIRV simulator: Struct has no members");
 
             type_id = struct_members_.at(type_id)[idx];
-            type    = GetType(type_id);
+            type    = GetTypeByTypeId(type_id);
         }
         else if ((type.kind == Type::Kind::Array) || (type.kind == Type::Kind::RuntimeArray))
         {
             type_id = type.array.elem_type_id;
-            type    = GetType(type_id);
+            type    = GetTypeByTypeId(type_id);
         }
         else if (type.kind == Type::Kind::Vector)
         {
             type_id = type.vector.elem_type_id;
-            type    = GetType(type_id);
+            type    = GetTypeByTypeId(type_id);
         }
         else if (type.kind == Type::Kind::Matrix)
         {
             type_id = type.matrix.col_type_id;
-            type    = GetType(type_id);
+            type    = GetTypeByTypeId(type_id);
         }
         else if (type.kind == Type::Kind::Pointer)
         {
             type_id = type.pointer.pointee_type_id;
-            type    = GetType(type_id);
+            type    = GetTypeByTypeId(type_id);
         }
         else
         {
@@ -980,7 +989,7 @@ void SPIRVSimulator::GetBaseTypeIDs(uint32_t type_id, std::vector<uint32_t>& out
     /*
     Gets all the scalar types in a compond types, laid out as they are in memory.
     */
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     assertm(type.kind != Type::Kind::Void, "SPIRV simulator: Attempt to extract size of a void type");
 
@@ -1030,7 +1039,7 @@ void SPIRVSimulator::ExtractWords(const std::byte*       external_pointer,
     /*
     Extracts 32 bit word values with type matching type_id from the external_pointer byte buffer
     */
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     assertm(type.kind != Type::Kind::Void, "SPIRV simulator: Attempt to extract a void type from a buffer");
 
@@ -1082,7 +1091,7 @@ void SPIRVSimulator::ExtractWords(const std::byte*       external_pointer,
                     HasDecorator(type_id, spv::Decoration::DecorationColMajor),
                 "SPIRV simulator: No RowMajor or ColMajor decorator for input matrix");
 
-        const Type& col_type = GetType(type.matrix.col_type_id);
+        const Type& col_type = GetTypeByResultId(type.matrix.col_type_id);
         assertm(col_type.kind == Type::Kind::Vector, "SPIRV simulator: Non-vector column type found in matrix");
 
         // Because row-major matrices may not have a valid col type, we extract the subcomponents directly
@@ -1123,7 +1132,7 @@ void SPIRVSimulator::ExtractWords(const std::byte*       external_pointer,
         size_t ext_ptr_offset = 0;
         for (auto base_type_id : base_type_ids)
         {
-            const Type& base_type = GetType(base_type_id);
+            const Type& base_type = GetTypeByResultId(base_type_id);
             size_t      bytes_to_extract;
 
             if (base_type.kind == Type::Kind::Pointer)
@@ -1150,9 +1159,9 @@ uint64_t SPIRVSimulator::GetPointerOffset(const PointerV& pointer_value)
     */
     uint64_t offset  = 0;
     uint32_t type_id = pointer_value.type_id;
-    Type     type    = GetType(type_id);
+    Type     type    = GetTypeByTypeId(type_id);
     type_id          = type.pointer.pointee_type_id;
-    type             = GetType(type_id);
+    type             = GetTypeByTypeId(type_id);
 
     assertm(type.kind != Type::Kind::Void, "SPIRV simulator: Attempt to extract a void type offset");
 
@@ -1166,7 +1175,7 @@ uint64_t SPIRVSimulator::GetPointerOffset(const PointerV& pointer_value)
 
             offset += GetDecoratorLiteral(type_id, indirection_index, spv::Decoration::DecorationOffset);
             type_id = struct_members_.at(type_id)[indirection_index];
-            type    = GetType(type_id);
+            type    = GetTypeByTypeId(type_id);
         }
         else if (type.kind == Type::Kind::Array || type.kind == Type::Kind::RuntimeArray)
         {
@@ -1177,7 +1186,7 @@ uint64_t SPIRVSimulator::GetPointerOffset(const PointerV& pointer_value)
             uint32_t array_stride = GetDecoratorLiteral(type_id, spv::Decoration::DecorationArrayStride);
             offset += indirection_index * array_stride;
             type_id = type.array.elem_type_id;
-            type    = GetType(type_id);
+            type    = GetTypeByTypeId(type_id);
         }
         else if (type.kind == Type::Kind::Matrix)
         {
@@ -1188,12 +1197,12 @@ uint64_t SPIRVSimulator::GetPointerOffset(const PointerV& pointer_value)
             uint32_t matrix_stride = GetDecoratorLiteral(type_id, spv::Decoration::DecorationMatrixStride);
             offset += indirection_index * matrix_stride;
             type_id = type.matrix.col_type_id;
-            type    = GetType(type_id);
+            type    = GetTypeByTypeId(type_id);
         }
         else if (type.kind == Type::Kind::Vector)
         {
             type_id = type.vector.elem_type_id;
-            type    = GetType(type.vector.elem_type_id);
+            type    = GetTypeByResultId(type.vector.elem_type_id);
             offset += indirection_index * std::ceil(type.scalar.width / 8.0);
         }
         else
@@ -1231,7 +1240,7 @@ uint32_t SPIRVSimulator::GetTypeID(uint32_t result_id) const
 
 Value SPIRVSimulator::MakeScalar(uint32_t type_id, const uint32_t*& words)
 {
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     switch (type.kind)
     {
@@ -1308,7 +1317,7 @@ Value SPIRVSimulator::MakeScalar(uint32_t type_id, const uint32_t*& words)
 
 Value SPIRVSimulator::MakeDefault(uint32_t type_id, const uint32_t** initial_data)
 {
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     switch (type.kind)
     {
@@ -1756,7 +1765,7 @@ void SPIRVSimulator::GLSLExtHandler(uint32_t                         type_id,
                                     uint32_t                         instruction_literal,
                                     const std::span<const uint32_t>& operand_words)
 {
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     switch (instruction_literal)
     {
@@ -2081,7 +2090,7 @@ void SPIRVSimulator::Op_Constant(const Instruction& instruction)
 
     uint32_t    type_id   = instruction.words[1];
     uint32_t    result_id = instruction.words[2];
-    const Type& type      = GetType(type_id);
+    const Type& type      = GetTypeByTypeId(type_id);
 
     assertm((type.kind == Type::Kind::Int) || (type.kind == Type::Kind::Float),
             "SPIRV simulator: Constant type unsupported");
@@ -2173,7 +2182,7 @@ void SPIRVSimulator::Op_CompositeConstruct(const Instruction& instruction)
     // Composite: An aggregate (structure or an array), a matrix, or a vector.
     uint32_t    type_id   = instruction.words[1];
     uint32_t    result_id = instruction.words[2];
-    const Type& type      = GetType(type_id);
+    const Type& type      = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -2250,7 +2259,7 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction)
     uint32_t result_id     = instruction.words[2];
     uint32_t storage_class = instruction.words[3];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     assertm(type.kind == Type::Kind::Pointer, "SPIRV simulator: Op_Variable must only be used to create pointer types");
 
@@ -2356,7 +2365,7 @@ void SPIRVSimulator::Op_Variable(const Instruction& instruction)
         }
     }
 
-    const Type& pointee_type = GetType(type.pointer.pointee_type_id);
+    const Type& pointee_type = GetTypeByResultId(type.pointer.pointee_type_id);
     if ((pointee_type.kind == Type::Kind::Pointer) &&
         (pointee_type.pointer.storage_class == spv::StorageClass::StorageClassPhysicalStorageBuffer))
     {
@@ -2456,7 +2465,7 @@ void SPIRVSimulator::Op_AccessChain(const Instruction& instruction)
     uint32_t base_id   = instruction.words[3];
 
     const Value& base_value = GetValue(base_id);
-    Type         base_type  = GetType(base_id);
+    Type         base_type  = GetTypeByResultId(base_id);
 
     assertm(std::holds_alternative<PointerV>(base_value),
             "SPIRV simulator: Attempt to use OpAccessChain on a non-pointer value");
@@ -2488,8 +2497,8 @@ void SPIRVSimulator::Op_AccessChain(const Instruction& instruction)
         physical_address_pointers_.push_back(new_pointer);
     }
 
-    const Type& result_type         = GetType(type_id);
-    const Type& result_pointee_type = GetType(result_type.pointer.pointee_type_id);
+    const Type& result_type         = GetTypeByTypeId(type_id);
+    const Type& result_pointee_type = GetTypeByResultId(result_type.pointer.pointee_type_id);
     if ((result_pointee_type.kind == Type::Kind::Pointer) &&
         (result_pointee_type.pointer.storage_class == spv::StorageClass::StorageClassPhysicalStorageBuffer))
     {
@@ -2674,7 +2683,7 @@ void SPIRVSimulator::Op_FAdd(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -2783,7 +2792,7 @@ void SPIRVSimulator::Op_FMul(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -2854,7 +2863,7 @@ void SPIRVSimulator::Op_INotEqual(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -2968,7 +2977,7 @@ void SPIRVSimulator::Op_IAdd(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type type = GetType(type_id);
+    const Type type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -3074,7 +3083,7 @@ void SPIRVSimulator::Op_ISub(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    Type type = GetType(type_id);
+    Type type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -3178,7 +3187,7 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction)
     uint32_t result_id  = instruction.words[2];
     uint32_t operand_id = instruction.words[3];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& operand = GetValue(operand_id);
 
     if (type.kind == Type::Kind::Vector)
@@ -3195,7 +3204,7 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction)
         {
             assertm(std::holds_alternative<uint64_t>(vec->elems[i]),
                     "SPIRV simulator: Non-boolean type found in vector operand");
-            result_vec->elems.push_back((uint64_t)!(std::get<uint64_t>(vec->elems[i])));
+            result_vec->elems.push_back((uint64_t) !(std::get<uint64_t>(vec->elems[i])));
         }
 
         SetValue(result_id, result);
@@ -3205,7 +3214,7 @@ void SPIRVSimulator::Op_LogicalNot(const Instruction& instruction)
         Value result;
 
         assertm(std::holds_alternative<uint64_t>(operand), "SPIRV simulator: Non-boolean type found in operand");
-        result = (uint64_t)!(std::get<uint64_t>(operand));
+        result = (uint64_t) !(std::get<uint64_t>(operand));
 
         SetValue(result_id, result);
     }
@@ -3509,7 +3518,7 @@ void SPIRVSimulator::Op_UGreaterThanEqual(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(operand1_id);
     const Value& val_op2 = GetValue(operand2_id);
 
@@ -3612,7 +3621,7 @@ void SPIRVSimulator::Op_ConvertUToF(const Instruction& instruction)
     uint32_t result_id = instruction.words[2];
     uint32_t value_id  = instruction.words[3];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -3675,7 +3684,7 @@ void SPIRVSimulator::Op_ConvertSToF(const Instruction& instruction)
     uint32_t result_id = instruction.words[2];
     uint32_t value_id  = instruction.words[3];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -3737,7 +3746,7 @@ void SPIRVSimulator::Op_FDiv(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -3807,7 +3816,7 @@ void SPIRVSimulator::Op_FSub(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -3879,7 +3888,7 @@ void SPIRVSimulator::Op_VectorTimesScalar(const Instruction& instruction)
     uint32_t vector_id = instruction.words[3];
     uint32_t scalar_id = instruction.words[4];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     Value result     = std::make_shared<VectorV>();
     auto  result_vec = std::get<std::shared_ptr<VectorV>>(result);
@@ -3927,7 +3936,7 @@ void SPIRVSimulator::Op_SLessThan(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -3995,7 +4004,7 @@ void SPIRVSimulator::Op_Dot(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Float)
     {
@@ -4051,7 +4060,7 @@ void SPIRVSimulator::Op_FOrdGreaterThan(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(operand1_id);
     const Value& val_op2 = GetValue(operand2_id);
 
@@ -4192,9 +4201,9 @@ void SPIRVSimulator::Op_Bitcast(const Instruction& instruction)
     uint32_t operand_id = instruction.words[3];
 
     const Value& operand      = GetValue(operand_id);
-    Type         operand_type = GetType(operand_id);
+    Type         operand_type = GetTypeByResultId(operand_id);
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     //
     // First, we extract all the data from the operands into a vector
@@ -4202,7 +4211,7 @@ void SPIRVSimulator::Op_Bitcast(const Instruction& instruction)
     std::vector<std::byte> bytes;
     if (std::holds_alternative<std::shared_ptr<VectorV>>(operand))
     {
-        const Type&              elem_type = GetType(operand_type.vector.elem_type_id);
+        const Type&              elem_type = GetTypeByResultId(operand_type.vector.elem_type_id);
         std::shared_ptr<VectorV> vec       = std::get<std::shared_ptr<VectorV>>(operand);
         for (const Value& element : vec->elems)
         {
@@ -4265,7 +4274,7 @@ void SPIRVSimulator::Op_Bitcast(const Instruction& instruction)
     Value result;
     if (type.kind == Type::Kind::Vector)
     {
-        const Type&              elem_type       = GetType(type.vector.elem_type_id);
+        const Type&              elem_type       = GetTypeByResultId(type.vector.elem_type_id);
         uint32_t                 elem_size_bytes = elem_type.scalar.width / 8;
         std::shared_ptr<VectorV> vec             = std::get<std::shared_ptr<VectorV>>(result);
         uint32_t                 current_byte    = 0;
@@ -4400,7 +4409,7 @@ void SPIRVSimulator::Op_IMul(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -4420,7 +4429,8 @@ void SPIRVSimulator::Op_IMul(const Instruction& instruction)
         assertm((vec1->elems.size() == vec2->elems.size()) && (vec1->elems.size() == type.vector.elem_count),
                 "SPIRV simulator: Operands not of equal/correct length in Op_IMul");
 
-        for (uint32_t i = 0; i < type.vector.elem_count; ++i){
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i)
+        {
             Value elem_result;
 
             if (std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i]))
@@ -4491,7 +4501,7 @@ void SPIRVSimulator::Op_ConvertUToPtr(const Instruction& instruction)
     uint32_t result_id  = instruction.words[2];
     uint32_t integer_id = instruction.words[3];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& operand = GetValue(integer_id);
 
     // This is unhandled (and probably illegal?)
@@ -4559,7 +4569,7 @@ void SPIRVSimulator::Op_UDiv(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(instruction.words[3]);
     const Value& val_op2 = GetValue(instruction.words[4]);
 
@@ -4626,7 +4636,7 @@ void SPIRVSimulator::Op_UMod(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -4697,7 +4707,7 @@ void SPIRVSimulator::Op_ULessThan(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -4762,7 +4772,7 @@ void SPIRVSimulator::Op_ConstantTrue(const Instruction& instruction)
 
     uint32_t    type_id   = instruction.words[1];
     uint32_t    result_id = instruction.words[2];
-    const Type& type      = GetType(type_id);
+    const Type& type      = GetTypeByTypeId(type_id);
 
     assertm(type.kind == Type::Kind::BoolT, "SPIRV simulator: Constant type must be bool");
 
@@ -4781,7 +4791,7 @@ void SPIRVSimulator::Op_ConstantFalse(const Instruction& instruction)
 
     uint32_t    type_id   = instruction.words[1];
     uint32_t    result_id = instruction.words[2];
-    const Type& type      = GetType(type_id);
+    const Type& type      = GetTypeByTypeId(type_id);
 
     assertm(type.kind == Type::Kind::BoolT, "SPIRV simulator: Constant type must be bool");
 
@@ -4819,7 +4829,7 @@ void SPIRVSimulator::Op_ConstantNull(const Instruction& instruction)
 
     uint32_t    type_id   = instruction.words[1];
     uint32_t    result_id = instruction.words[2];
-    const Type& type      = GetType(type_id);
+    const Type& type      = GetTypeByTypeId(type_id);
 
     // TODO: This will crash for most pointers, we have to handle that case without MakeDefault
     assertm(type.kind != Type::Kind::Pointer,
@@ -4947,7 +4957,7 @@ void SPIRVSimulator::Op_Select(const Instruction& instruction)
     uint32_t obj_1_id     = instruction.words[4];
     uint32_t obj_2_id     = instruction.words[5];
 
-    const Type&  type          = GetType(type_id);
+    const Type&  type          = GetTypeByTypeId(type_id);
     const Value& condition_val = GetValue(condition_id);
     const Value& val_op1       = GetValue(obj_1_id);
     const Value& val_op2       = GetValue(obj_2_id);
@@ -5024,7 +5034,7 @@ void SPIRVSimulator::Op_IEqual(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
 
     if (type.kind == Type::Kind::Vector)
     {
@@ -5197,12 +5207,12 @@ void SPIRVSimulator::Op_Transpose(const Instruction& instruction)
     uint32_t    type_id   = instruction.words[1];
     uint32_t    result_id = instruction.words[2];
     uint32_t    matrix_id = instruction.words[3];
-    const Type& type      = GetType(type_id);
+    const Type& type      = GetTypeByTypeId(type_id);
 
     assertm(type.kind == Type::Kind::Matrix, "SPIRV simulator: Non-matrix type given to Op_Transpose");
     assertm(type.matrix.col_count > 0, "SPIRV simulator: Matrix type with no columns encountered");
 
-    const Type& col_type = GetType(type.matrix.col_type_id);
+    const Type& col_type = GetTypeByResultId(type.matrix.col_type_id);
     assertm(col_type.kind == Type::Kind::Vector,
             "SPIRV simulator: Non-vector column type in matrix type given to Op_Transpose");
     assertm(col_type.vector.elem_count > 0, "SPIRV simulator: Vector type with no elements encountered");
@@ -5253,7 +5263,7 @@ void SPIRVSimulator::Op_FNegate(const Instruction& instruction)
     uint32_t result_id  = instruction.words[2];
     uint32_t operand_id = instruction.words[3];
 
-    const Type&  type   = GetType(type_id);
+    const Type&  type   = GetTypeByTypeId(type_id);
     const Value& val_op = GetValue(operand_id);
 
     if (type.kind == Type::Kind::Vector)
@@ -5309,7 +5319,7 @@ void SPIRVSimulator::Op_UGreaterThan(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(operand1_id);
     const Value& val_op2 = GetValue(operand2_id);
 
@@ -5371,7 +5381,7 @@ void SPIRVSimulator::Op_FOrdLessThan(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(operand1_id);
     const Value& val_op2 = GetValue(operand2_id);
 
@@ -5431,7 +5441,7 @@ void SPIRVSimulator::Op_FOrdLessThanEqual(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(operand1_id);
     const Value& val_op2 = GetValue(operand2_id);
 
@@ -5512,7 +5522,7 @@ void SPIRVSimulator::Op_Switch(const Instruction& instruction)
         assertx("SPIRV simulator: Selector value is not an integer");
     }
 
-    const Type& type = GetType(selector_id);
+    const Type& type = GetTypeByResultId(selector_id);
     assertm(type.scalar.width <= 32,
             "SPIRV simulator: Selector ID uses more than 32 bits, this is not handled at present and should be "
             "implemented");
@@ -5552,10 +5562,10 @@ void SPIRVSimulator::Op_MatrixTimesVector(const Instruction& instruction)
     uint32_t matrix_id = instruction.words[3];
     uint32_t vector_id = instruction.words[4];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
     assertm(type.kind == Type::Kind::Vector, "SPIRV simulator: Result operand is not a vector");
-    assertm(GetType(matrix_id).kind == Type::Kind::Matrix, "SPIRV simulator: First operand is not a matrix");
-    assertm(GetType(vector_id).kind == Type::Kind::Vector, "SPIRV simulator: Second operand is not a vector");
+    assertm(GetTypeByResultId(matrix_id).kind == Type::Kind::Matrix, "SPIRV simulator: First operand is not a matrix");
+    assertm(GetTypeByResultId(vector_id).kind == Type::Kind::Vector, "SPIRV simulator: Second operand is not a vector");
 
     const std::shared_ptr<VectorV>& vector = std::get<std::shared_ptr<VectorV>>(GetValue(vector_id));
     const std::shared_ptr<MatrixV>& matrix = std::get<std::shared_ptr<MatrixV>>(GetValue(matrix_id));
@@ -5623,7 +5633,7 @@ void SPIRVSimulator::Op_VectorShuffle(const Instruction& instruction)
     uint32_t vec1_id   = instruction.words[3];
     uint32_t vec2_id   = instruction.words[4];
 
-    assertm(GetType(type_id).kind == Type::Kind::Vector, "SPIRV simulator: Non-vector result type");
+    assertm(GetTypeByTypeId(type_id).kind == Type::Kind::Vector, "SPIRV simulator: Non-vector result type");
 
     const Value& vector1_val = GetValue(vec1_id);
     const Value& vector2_val = GetValue(vec2_id);
@@ -5678,7 +5688,7 @@ void SPIRVSimulator::Op_ShiftRightLogical(const Instruction& instruction)
     uint32_t op1_id    = instruction.words[3];
     uint32_t op2_id    = instruction.words[4];
 
-    const Type&  type = GetType(type_id);
+    const Type&  type = GetTypeByTypeId(type_id);
     const Value& op1  = GetValue(op1_id);
     const Value& op2  = GetValue(op2_id);
 
@@ -5754,7 +5764,7 @@ void SPIRVSimulator::Op_ShiftLeftLogical(const Instruction& instruction)
     uint32_t op1_id    = instruction.words[3];
     uint32_t op2_id    = instruction.words[4];
 
-    const Type&  type = GetType(type_id);
+    const Type&  type = GetTypeByTypeId(type_id);
     const Value& op1  = GetValue(op1_id);
     const Value& op2  = GetValue(op2_id);
 
@@ -5832,7 +5842,7 @@ void SPIRVSimulator::Op_BitwiseOr(const Instruction& instruction)
     uint32_t op1_id    = instruction.words[3];
     uint32_t op2_id    = instruction.words[4];
 
-    const Type&  type    = GetType(type_id);
+    const Type&  type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(op1_id);
     const Value& val_op2 = GetValue(op2_id);
 
@@ -5928,7 +5938,7 @@ void SPIRVSimulator::Op_BitwiseAnd(const Instruction& instruction)
     uint32_t op1_id    = instruction.words[3];
     uint32_t op2_id    = instruction.words[4];
 
-    const Type&  type    = GetType(type_id);
+    const Type&  type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(op1_id);
     const Value& val_op2 = GetValue(op2_id);
 
@@ -6021,7 +6031,7 @@ void SPIRVSimulator::Op_All(const Instruction& instruction)
     uint32_t result_id = instruction.words[2];
     uint32_t vector_id = instruction.words[3];
 
-    const Type&  type       = GetType(type_id);
+    const Type&  type       = GetTypeByTypeId(type_id);
     const Value& vector_val = GetValue(vector_id);
 
     assertm(type.kind == Type::Kind::Vector, "SPIRV simulator: Operand is not of vector type");
@@ -6057,7 +6067,7 @@ void SPIRVSimulator::Op_Any(const Instruction& instruction)
     uint32_t result_id = instruction.words[2];
     uint32_t vector_id = instruction.words[3];
 
-    const Type&  type       = GetType(type_id);
+    const Type&  type       = GetTypeByTypeId(type_id);
     const Value& vector_val = GetValue(vector_id);
 
     assertm(type.kind == Type::Kind::Vector, "SPIRV simulator: Operand is not of vector type");
@@ -6099,14 +6109,14 @@ void SPIRVSimulator::Op_BitCount(const Instruction& instruction)
     uint32_t result_id = instruction.words[2];
     uint32_t base_id   = instruction.words[3];
 
-    const Type&  type     = GetType(type_id);
+    const Type&  type     = GetTypeByTypeId(type_id);
     const Value& base_val = GetValue(base_id);
 
     uint32_t base_type_id = GetTypeID(base_id);
 
     if (type.kind == Type::Kind::Vector)
     {
-        const Type&                    base_type  = GetType(base_type_id);
+        const Type&                    base_type  = GetTypeByResultId(base_type_id);
         const std::shared_ptr<VectorV> vec        = std::get<std::shared_ptr<VectorV>>(base_val);
         std::shared_ptr<VectorV>       result_vec = std::make_shared<VectorV>();
 
@@ -6212,10 +6222,10 @@ void SPIRVSimulator::Op_VectorTimesMatrix(const Instruction& instruction)
     uint32_t vector_id = instruction.words[3];
     uint32_t matrix_id = instruction.words[4];
 
-    const Type& type = GetType(type_id);
+    const Type& type = GetTypeByTypeId(type_id);
     assertm(type.kind == Type::Kind::Vector, "SPIRV simulator: Result operand is not a vector");
-    assertm(GetType(matrix_id).kind == Type::Kind::Matrix, "SPIRV simulator: Second operand is not a matrix");
-    assertm(GetType(vector_id).kind == Type::Kind::Vector, "SPIRV simulator: First operand is not a vector");
+    assertm(GetTypeByResultId(matrix_id).kind == Type::Kind::Matrix, "SPIRV simulator: Second operand is not a matrix");
+    assertm(GetTypeByResultId(vector_id).kind == Type::Kind::Vector, "SPIRV simulator: First operand is not a vector");
 
     const std::shared_ptr<VectorV>& vector = std::get<std::shared_ptr<VectorV>>(GetValue(vector_id));
     const std::shared_ptr<MatrixV>& matrix = std::get<std::shared_ptr<MatrixV>>(GetValue(matrix_id));
@@ -6271,7 +6281,7 @@ void SPIRVSimulator::Op_ULessThanEqual(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(operand1_id);
     const Value& val_op2 = GetValue(operand2_id);
 
@@ -6334,7 +6344,7 @@ void SPIRVSimulator::Op_SLessThanEqual(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(operand1_id);
     const Value& val_op2 = GetValue(operand2_id);
 
@@ -6396,7 +6406,7 @@ void SPIRVSimulator::Op_SGreaterThanEqual(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(operand1_id);
     const Value& val_op2 = GetValue(operand2_id);
 
@@ -6458,7 +6468,7 @@ void SPIRVSimulator::Op_SGreaterThan(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(operand1_id);
     const Value& val_op2 = GetValue(operand2_id);
 
@@ -6520,7 +6530,7 @@ void SPIRVSimulator::Op_SDiv(const Instruction& instruction)
     uint32_t type_id   = instruction.words[1];
     uint32_t result_id = instruction.words[2];
 
-    Type         type    = GetType(type_id);
+    Type         type    = GetTypeByTypeId(type_id);
     const Value& val_op1 = GetValue(instruction.words[3]);
     const Value& val_op2 = GetValue(instruction.words[4]);
 
@@ -6592,7 +6602,7 @@ void SPIRVSimulator::Op_SNegate(const Instruction& instruction)
     uint32_t result_id  = instruction.words[2];
     uint32_t operand_id = instruction.words[3];
 
-    const Type&  type   = GetType(type_id);
+    const Type&  type   = GetTypeByTypeId(type_id);
     const Value& val_op = GetValue(operand_id);
 
     if (type.kind == Type::Kind::Vector)
@@ -6613,7 +6623,9 @@ void SPIRVSimulator::Op_SNegate(const Instruction& instruction)
         }
 
         SetValue(result_id, result);
-    } else if (type.kind == Type::Kind::Int){
+    }
+    else if (type.kind == Type::Kind::Int)
+    {
         // TODO: Operands dont have to be signed? If so, fix it
         assertm(std::holds_alternative<int64_t>(val_op), "SPIRV simulator: Operands not of int type");
 
@@ -6646,7 +6658,7 @@ void SPIRVSimulator::Op_LogicalOr(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    const Type&  type     = GetType(type_id);
+    const Type&  type     = GetTypeByTypeId(type_id);
     const Value& operand1 = GetValue(operand1_id);
     const Value& operand2 = GetValue(operand2_id);
 
@@ -6711,7 +6723,7 @@ void SPIRVSimulator::Op_LogicalAnd(const Instruction& instruction)
     uint32_t operand1_id = instruction.words[3];
     uint32_t operand2_id = instruction.words[4];
 
-    const Type&  type     = GetType(type_id);
+    const Type&  type     = GetTypeByTypeId(type_id);
     const Value& operand1 = GetValue(operand1_id);
     const Value& operand2 = GetValue(operand2_id);
 
@@ -6776,15 +6788,15 @@ void SPIRVSimulator::Op_MatrixTimesMatrix(const Instruction& instruction)
     uint32_t matrix_left_id  = instruction.words[3];
     uint32_t matrix_right_id = instruction.words[4];
 
-    const Type& type       = GetType(type_id);
-    const Type& left_type  = GetType(matrix_left_id);
-    const Type& right_type = GetType(matrix_right_id);
+    const Type& type       = GetTypeByTypeId(type_id);
+    const Type& left_type  = GetTypeByResultId(matrix_left_id);
+    const Type& right_type = GetTypeByResultId(matrix_right_id);
 
     assertm(type.kind == Type::Kind::Matrix, "SPIRV simulator: Result operand is not a matrix");
     assertm(left_type.kind == Type::Kind::Matrix, "SPIRV simulator: First operand is not a matrix");
     assertm(right_type.kind == Type::Kind::Matrix, "SPIRV simulator: Second operand is not a matrix");
 
-    const Type& left_col_type = GetType(left_type.matrix.col_type_id);
+    const Type& left_col_type = GetTypeByResultId(left_type.matrix.col_type_id);
     assertm(left_col_type.kind == Type::Kind::Vector, "SPIRV simulator: Left matrix col type is not vector");
 
     const std::shared_ptr<MatrixV>& matrix_left  = std::get<std::shared_ptr<MatrixV>>(GetValue(matrix_left_id));
@@ -6877,7 +6889,7 @@ void SPIRVSimulator::Op_IsNan(const Instruction& instruction)
     std::cout << execIndent << "WARNING: OpIsNan executed, keep this in mind if you see broken behaviour here"
               << std::endl;
 
-    const Type&  type  = GetType(type_id);
+    const Type&  type  = GetTypeByTypeId(type_id);
     const Value& x_val = GetValue(x_id);
 
     if (type.kind == Type::Kind::Vector)

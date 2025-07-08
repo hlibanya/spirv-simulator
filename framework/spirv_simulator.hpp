@@ -465,7 +465,8 @@ class SPIRVSimulator
     virtual Value&      Deref(const PointerV& ptr);
     virtual Value&      GetValue(uint32_t result_id);
     virtual void        SetValue(uint32_t result_id, const Value& value);
-    virtual Type        GetType(uint32_t result_id) const;
+    virtual Type        GetTypeByTypeId(uint32_t type_id) const;
+    virtual Type        GetTypeByResultId(uint32_t result_id) const;
     virtual uint32_t    GetTypeID(uint32_t result_id) const;
     virtual void ExtractWords(const std::byte* external_pointer, uint32_t type_id, std::vector<uint32_t>& buffer_data);
     virtual uint64_t                    GetPointerOffset(const PointerV& pointer_value);

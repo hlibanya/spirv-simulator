@@ -48,7 +48,7 @@ class ArithmeticsMock : public SPIRVSimulatorMockBase
     MOCK_METHOD(void, SetValue, (uint32_t id, const ::SPIRVSimulator::Value& value), (override));
     MOCK_METHOD(::SPIRVSimulator::Value&, GetValue, (uint32_t id), (override));
 
-    MOCK_METHOD(::SPIRVSimulator::Type, GetType, (uint32_t id), (const override));
+    MOCK_METHOD(::SPIRVSimulator::Type, GetTypeByTypeId, (uint32_t id), (const override));
 };
 
 struct ArithmeticParams
@@ -100,7 +100,7 @@ class ArithmeticsTest : public TestWithParam<ArithmeticParams>
     {
         for (uint32_t i = 0; i < types_.size(); ++i)
         {
-            EXPECT_CALL(mock, GetType(i)).WillRepeatedly(Return(types_[i]));
+            EXPECT_CALL(mock, GetTypeByTypeId(i)).WillRepeatedly(Return(types_[i]));
         }
     }
     uint32_t NextId() { return id_counter++; }
