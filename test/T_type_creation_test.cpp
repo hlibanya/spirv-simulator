@@ -8,34 +8,14 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include "../spirv_simulator.hpp"
-
-// TODO: Remove this to utilities - copy paste from main
-static std::vector<uint32_t> ReadFile(const std::string &path){
-    std::ifstream infile(path, std::ios::binary | std::ios::ate);
-
-    if(!infile){
-        throw std::runtime_error("Cannot open " + path);
-    }
-
-    auto size = infile.tellg();
-    infile.seekg(0, std::ios::beg);
-
-    std::vector<uint32_t> buf(static_cast<size_t>(size) / 4);
-
-    infile.read(reinterpret_cast<char*>(buf.data()), size);
-    if (infile.fail()){
-        throw std::runtime_error("Read error");
-    }
-
-    return buf;
-}
+#include "../util.hpp"
 
 const char* input_test_file = "../test_shaders/vulkan_type_creation.spirv";
 
 struct SimulatorSetup
 {
 	SimulatorSetup(){
-		sim = std::make_unique<SPIRVSimulator::SPIRVSimulator>(ReadFile(input_test_file), inputs, false);
+		sim = std::make_unique<SPIRVSimulator::SPIRVSimulator>(util::ReadFile(input_test_file), inputs, false);
 		sim->Run();
 	}
 
