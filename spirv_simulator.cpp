@@ -5452,7 +5452,7 @@ void SPIRVSimulator::Op_SNegate(const Instruction& instruction){
         }
 
         SetValue(result_id, result);
-    } else if (type.kind == Type::Kind::Float){
+    } else if (type.kind == Type::Kind::Int){
         // TODO: Operands dont have to be signed? If so, fix it
         assertm (std::holds_alternative<int64_t>(val_op), "SPIRV simulator: Operands not of int type");
 
