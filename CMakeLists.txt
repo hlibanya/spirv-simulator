@@ -9,8 +9,8 @@ project(spirv_simulator)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(SOURCE_FILES spirv_simulator.cpp)
-set(HEADER_FILES spirv_simulator.hpp spirv.hpp)
+set(SOURCE_FILES ${CMAKE_SOURCE_DIR}/spirv_simulator.cpp)
+set(HEADER_FILES ${CMAKE_SOURCE_DIR}/spirv_simulator.hpp ${CMAKE_SOURCE_DIR}/spirv.hpp)
 
 add_executable(spirv_simulator ${SOURCE_FILES} ${HEADER_FILES} main.cpp)
 target_compile_options(spirv_simulator PRIVATE -Wall -Wextra -Wpedantic -Wshadow -std=c++20 -fno-fast-math)
@@ -18,13 +18,23 @@ target_compile_options(spirv_simulator PRIVATE -Wall -Wextra -Wpedantic -Wshadow
 add_executable(spirv_opcode_support_checker ${SOURCE_FILES} ${HEADER_FILES} main_opcode_checker.cpp)
 target_compile_options(spirv_opcode_support_checker PRIVATE -Wall -Wextra -Wpedantic -Wshadow -std=c++20 -fno-fast-math)
 
-add_library(catch2 INTERFACE)
-target_include_directories(catch2 SYSTEM INTERFACE external)
+Include(FetchContent)
+
+FetchContent_Declare(
+  Catch2
+  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+  GIT_TAG        v3.8.1 # or a later release
+)
+
+FetchContent_MakeAvailable(Catch2)
 
 add_executable(test_type_creation)
-target_link_libraries(test_type_creation PRIVATE catch2)
-target_sources(test_type_creation PRIVATE test/T_type_creation_test.cpp)
-add_test(NAME test_type_creation COMMAND test_type_creation)
+target_link_libraries(test_type_creation PRIVATE Catch2::Catch2WithMain)
+target_sources(test_type_creation PRIVATE test/T_type_creation_test.cpp ${SOURCE_FILES} ${HEADER_FILES})
+
+include(CTest)
+include(Catch)
+catch_discover_tests(test_type_creation REPORTER compact)
 
 add_custom_target(run_tests
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
