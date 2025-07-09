@@ -188,12 +188,18 @@ void SPIRVSimulator::RegisterOpcodeHandlers(){
     R(spv::Op::OpLogicalAnd,             [this](const Instruction& i){Op_LogicalAnd(i);});
     R(spv::Op::OpMatrixTimesMatrix,      [this](const Instruction& i){Op_MatrixTimesMatrix(i);});
     R(spv::Op::OpIsNan,                  [this](const Instruction& i){Op_IsNan(i);});
-    R(spv::Op::OpConvertFToS,            [this](const Instruction& i){OpConvertFToS(i);});
-    R(spv::Op::OpConvertFToU,            [this](const Instruction& i){OpConvertFToU(i);});
-    R(spv::Op::OpFOrdEqual,              [this](const Instruction& i){OpFOrdEqual(i);});
-    R(spv::Op::OpFOrdGreaterThanEqual,   [this](const Instruction& i){OpFOrdGreaterThanEqual(i);});
-    R(spv::Op::OpFOrdNotEqual,           [this](const Instruction& i){OpFOrdNotEqual(i);});
-    R(spv::Op::OpFRem,                   [this](const Instruction& i){OpFRem(i);});
+    R(spv::Op::OpConvertFToS,            [this](const Instruction& i){Op_ConvertFToS(i);});
+    R(spv::Op::OpConvertFToU,            [this](const Instruction& i){Op_ConvertFToU(i);});
+    R(spv::Op::OpFOrdEqual,              [this](const Instruction& i){Op_FOrdEqual(i);});
+    R(spv::Op::OpFOrdGreaterThanEqual,   [this](const Instruction& i){Op_FOrdGreaterThanEqual(i);});
+    R(spv::Op::OpFOrdNotEqual,           [this](const Instruction& i){Op_FOrdNotEqual(i);});
+    R(spv::Op::OpFRem,                   [this](const Instruction& i){Op_FRem(i);});
+    R(spv::Op::OpAtomicOr,               [this](const Instruction& i){Op_AtomicOr(i);});
+    R(spv::Op::OpAtomicUMax,             [this](const Instruction& i){Op_AtomicUMax(i);});
+    R(spv::Op::OpAtomicUMin,             [this](const Instruction& i){Op_AtomicUMin(i);});
+    R(spv::Op::OpBitwiseXor,             [this](const Instruction& i){Op_BitwiseXor(i);});
+    R(spv::Op::OpControlBarrier,         [this](const Instruction& i){Op_ControlBarrier(i);});
+    R(spv::Op::OpShiftRightArithmetic,   [this](const Instruction& i){Op_ShiftRightArithmetic(i);});
 }
 
 void SPIRVSimulator::CheckOpcodeSupport(){
@@ -5765,7 +5771,7 @@ void SPIRVSimulator::Op_ImageTexelPointer(const Instruction& instruction){
     assertx ("SPIRV simulator: Op_ImageTexelPointer is currently unimplemented");
 }
 
-void SPIRVSimulator::OpConvertFToS(const Instruction& instruction){
+void SPIRVSimulator::Op_ConvertFToS(const Instruction& instruction){
     /*
     Convert value numerically from floating point to signed integer, with round toward 0.0.
 
@@ -5804,7 +5810,7 @@ void SPIRVSimulator::OpConvertFToS(const Instruction& instruction){
         SetValue(result_id, result);
     }
 }
-void SPIRVSimulator::OpConvertFToU(const Instruction& instruction){
+void SPIRVSimulator::Op_ConvertFToU(const Instruction& instruction){
     /*
     Convert value numerically from floating point to unsigned integer, with round toward 0.0.
 
@@ -5843,7 +5849,7 @@ void SPIRVSimulator::OpConvertFToU(const Instruction& instruction){
         SetValue(result_id, result);
     }
 }
-void SPIRVSimulator::OpFOrdEqual(const Instruction& instruction){
+void SPIRVSimulator::Op_FOrdEqual(const Instruction& instruction){
     /*
     Floating-point comparison for being ordered and equal.
 
@@ -5885,7 +5891,7 @@ void SPIRVSimulator::OpFOrdEqual(const Instruction& instruction){
         SetValue(result_id, res);
     }
 }
-void SPIRVSimulator::OpFOrdGreaterThanEqual(const Instruction& instruction){
+void SPIRVSimulator::Op_FOrdGreaterThanEqual(const Instruction& instruction){
     /*
     Floating-point comparison if operands are ordered and Operand 1 is greater than or equal to Operand 2.
 
@@ -5926,7 +5932,7 @@ void SPIRVSimulator::OpFOrdGreaterThanEqual(const Instruction& instruction){
         SetValue(result_id, res);
     }
 }
-void SPIRVSimulator::OpFOrdNotEqual(const Instruction& instruction){
+void SPIRVSimulator::Op_FOrdNotEqual(const Instruction& instruction){
     /*
     Floating-point comparison for being ordered and not equal.
 
@@ -5967,7 +5973,7 @@ void SPIRVSimulator::OpFOrdNotEqual(const Instruction& instruction){
         SetValue(result_id, res);
     }
 }
-void SPIRVSimulator::OpFRem(const Instruction& instruction){
+void SPIRVSimulator::Op_FRem(const Instruction& instruction){
     /*
     The floating-point remainder whose sign matches the sign of Operand 1.
 
@@ -6013,6 +6019,237 @@ void SPIRVSimulator::OpFRem(const Instruction& instruction){
         }
         Value res = res;
         SetValue(result_id, res);
+    }
+}
+
+void SPIRVSimulator::Op_AtomicOr(const Instruction& instruction){
+/*
+Perform the following steps atomically with respect to any other atomic accesses within Memory to the same location:
+1) load through Pointer to get an Original Value,
+2) get a New Value by the bitwise OR of Original Value and Value, and
+3) store the New Value back through Pointer.
+
+The instruction’s result is the Original Value.
+
+Result Type must be an integer type scalar.
+
+The type of Value must be the same as Result Type. The type of the value pointed to by Pointer must be the same as Result Type.
+
+Memory is a memory Scope.
+*/
+    assert(instruction.opcode == spv::Op::OpAtomicOr);
+
+    uint32_t result_id = instruction.words[2];
+    uint32_t pointer_id = instruction.words[3];
+    uint32_t value_id = instruction.words[6];
+
+    PointerV pointer = std::get<PointerV>(GetValue(pointer_id));
+    Value pointee_val = Deref(pointer);
+    Value source_value = GetValue(value_id);
+
+    Value result;
+    if (std::holds_alternative<uint64_t>(pointee_val) && std::holds_alternative<uint64_t>(source_value)){
+        result = std::get<uint64_t>(pointee_val) | std::get<uint64_t>(source_value);
+    } else if (std::holds_alternative<int64_t>(pointee_val) && std::holds_alternative<int64_t>(source_value)){
+        result = std::get<int64_t>(pointee_val) | std::get<int64_t>(source_value);
+    } else {
+        assertx ("SPIRV simulator: Invalid type match in Op_AtomicISub, must be same type scalar integers");
+    }
+
+    Deref(pointer) = result;
+    SetValue(result_id, pointee_val);
+}
+void SPIRVSimulator::Op_AtomicUMax(const Instruction& instruction){
+/*
+Perform the following steps atomically with respect to any other atomic accesses within Memory to the same location:
+1) load through Pointer to get an Original Value,
+2) get a New Value by finding the largest unsigned integer of Original Value and Value, and
+3) store the New Value back through Pointer.
+
+The instruction’s result is the Original Value.
+
+Result Type must be an integer type scalar.
+
+The type of Value must be the same as Result Type. The type of the value pointed to by Pointer must be the same as Result Type.
+
+Memory is a memory Scope.
+*/
+
+    assert(instruction.opcode == spv::Op::OpAtomicUMax);
+
+    uint32_t result_id = instruction.words[2];
+    uint32_t pointer_id = instruction.words[3];
+    uint32_t value_id = instruction.words[6];
+
+    PointerV pointer = std::get<PointerV>(GetValue(pointer_id));
+    Value pointee_val = Deref(pointer);
+    Value source_value = GetValue(value_id);
+
+    Value result;
+    if (std::holds_alternative<uint64_t>(pointee_val) && std::holds_alternative<uint64_t>(source_value)){
+        result = std::max(std::get<uint64_t>(pointee_val), std::get<uint64_t>(source_value));
+    } else if (std::holds_alternative<int64_t>(pointee_val) && std::holds_alternative<int64_t>(source_value)){
+        result = std::max(std::get<int64_t>(pointee_val), std::get<int64_t>(source_value));
+    } else {
+        assertx ("SPIRV simulator: Invalid type match in Op_AtomicISub, must be same type scalar integers");
+    }
+
+    Deref(pointer) = result;
+    SetValue(result_id, pointee_val);
+
+}
+void SPIRVSimulator::Op_AtomicUMin(const Instruction& instruction){
+/*
+Perform the following steps atomically with respect to any other atomic accesses within Memory to the same location:
+1) load through Pointer to get an Original Value,
+2) get a New Value by finding the smallest unsigned integer of Original Value and Value, and
+3) store the New Value back through Pointer.
+
+The instruction’s result is the Original Value.
+
+Result Type must be an integer type scalar.
+
+The type of Value must be the same as Result Type. The type of the value pointed to by Pointer must be the same as Result Type.
+
+Memory is a memory Scope.
+*/
+    assert(instruction.opcode == spv::Op::OpAtomicUMin);
+
+    uint32_t result_id = instruction.words[2];
+    uint32_t pointer_id = instruction.words[3];
+    uint32_t value_id = instruction.words[6];
+
+    PointerV pointer = std::get<PointerV>(GetValue(pointer_id));
+    Value pointee_val = Deref(pointer);
+    Value source_value = GetValue(value_id);
+
+    Value result;
+    if (std::holds_alternative<uint64_t>(pointee_val) && std::holds_alternative<uint64_t>(source_value)){
+        result = std::min(std::get<uint64_t>(pointee_val), std::get<uint64_t>(source_value));
+    } else if (std::holds_alternative<int64_t>(pointee_val) && std::holds_alternative<int64_t>(source_value)){
+        result = std::min(std::get<int64_t>(pointee_val), std::get<int64_t>(source_value));
+    } else {
+        assertx ("SPIRV simulator: Invalid type match in Op_AtomicISub, must be same type scalar integers");
+    }
+
+    Deref(pointer) = result;
+    SetValue(result_id, pointee_val);
+}
+
+void SPIRVSimulator::Op_BitwiseXor(const Instruction& instruction){
+/*
+Result is 1 if exactly one of Operand 1 or Operand 2 is 1. Result is 0 if Operand 1 and Operand 2 have the same value.
+
+Results are computed per component, and within each component, per bit.
+
+Result Type must be a scalar or vector of integer type. The type of Operand 1 and Operand 2 must be a scalar or vector of integer type. They must have the same number of components as Result Type. They must have the same component width as Result Type.
+*/
+    assert(instruction.opcode == spv::Op::OpBitwiseXor);
+    uint32_t type_id   = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t op1_id    = instruction.words[3];
+    uint32_t op2_id    = instruction.words[4];
+
+    const Type& type     = types_.at(type_id);
+    const Value& op1_val = GetValue(op1_id);
+    const Value& op2_val = GetValue(op2_id);
+    if(type.kind == Type::Kind::Vector){
+        assertm (std::holds_alternative<VectorVPtr>(op1_val), "SPIRV simulator: Invalid value type for operand 1, must be vector when using vector type");
+        assertm (std::holds_alternative<VectorVPtr>(op2_val), "SPIRV simulator: Invalid value type for operand 2, must be vector when using vector type");
+        Value res = std::make_shared<VectorV>();
+        auto result_vec = std::get<VectorVPtr>(res);
+        auto op1_vec = std::get<VectorVPtr>(op1_val);
+        auto op2_vec = std::get<VectorVPtr>(op2_val);
+        for(uint32_t i = 0; i < type.vector.elem_count; i++){
+            if(std::holds_alternative<uint64_t>(op1_vec->elems[i])){
+                uint64_t rem = std::get<uint64_t>(op1_vec->elems[i])^std::get<uint64_t>(op2_vec->elems[i]);
+                result_vec->elems.push_back(rem);
+            }else if(std::holds_alternative<int64_t>(op1_vec->elems[i])){
+                int64_t rem = std::get<int64_t>(op1_vec->elems[i])^std::get<int64_t>(op2_vec->elems[i]);
+                result_vec->elems.push_back(rem);
+            }
+        }
+        SetValue(result_id, res);
+    }
+    else if(type.kind == Type::Kind::Int){
+        if(std::holds_alternative<uint64_t>(op1_val)){
+            SetValue(result_id, std::get<uint64_t>(op1_val) ^ std::get<uint64_t>(op2_val));    
+        }else if(std::holds_alternative<int64_t>(op1_val)){
+            SetValue(result_id, std::get<uint64_t>(op1_val) ^ std::get<uint64_t>(op2_val));
+        }
+    }
+
+}
+void SPIRVSimulator::Op_ControlBarrier(const Instruction& instruction){
+/*
+Wait for all invocations in the scope restricted tangle to reach the current point of execution before executing further instructions.
+Execution is the scope defining the scope restricted tangle affected by this command.
+An invocation will not execute a dynamic instance of this instruction (X') until all invocations in its scope restricted tangle have executed all dynamic instances that are program-ordered before X'.
+An invocation will not execute dynamic instances that are program-ordered after a dynamic instance of this instruction (X') until all invocations in its scope restricted tangle have executed X'.
+When Execution is Workgroup or larger, behavior is undefined unless all invocations within Execution execute the same dynamic instance of this instruction.
+If Semantics is not None, this instruction also serves as an OpMemoryBarrier instruction, and also performs and adheres to the description and semantics of an OpMemoryBarrier instruction with the same Memory and Semantics operands. This allows atomically specifying both a control barrier and a memory barrier (that is, without needing two instructions). If Semantics is None, Memory is ignored.
+Before version 1.3, it is only valid to use this instruction with TessellationControl, GLCompute, or Kernel execution models. There is no such restriction starting with version 1.3.
+If used with the TessellationControl execution model, it also implicitly synchronizes the Output Storage Class: Writes to Output variables performed by any invocation executed prior to a OpControlBarrier are visible to any other invocation proceeding beyond that OpControlBarrier.
+*/
+//No-op
+}
+
+int64_t arithmeticRightShift(int64_t x, int64_t n) {
+    if (x < 0 && n > 0)
+        return x >> n | ~(~0U >> n);
+    else
+        return x >> n;
+}
+void SPIRVSimulator::Op_ShiftRightArithmetic(const Instruction& instruction){
+/*
+Shift the bits in Base right by the number of bits specified in Shift. The most-significant bits are filled with the sign bit from Base.
+Result Type must be a scalar or vector of integer type.
+The type of each Base and Shift must be a scalar or vector of integer type. Base and Shift must have the same number of components. The number of components and bit width of the type of Base must be the same as in Result Type.
+Shift is treated as unsigned. The resulting value is undefined if Shift is greater than or equal to the bit width of the components of Base.
+Results are computed per component.
+*/
+    assert(instruction.opcode == spv::Op::OpShiftRightArithmetic);
+
+    uint32_t type_id = instruction.words[1];
+    uint32_t result_id = instruction.words[2];
+    uint32_t op1_id = instruction.words[3];
+    uint32_t op2_id = instruction.words[4];
+
+    const Type& type = types_.at(type_id);
+    const Value& op1 = GetValue(op1_id);
+    const Value& op2 = GetValue(op2_id);
+
+    if (type.kind == Type::Kind::Vector) {
+        Value result = std::make_shared<VectorV>();
+        auto result_vec = std::get<std::shared_ptr<VectorV>>(result);
+
+        auto vec1 = std::get<std::shared_ptr<VectorV>>(op1);
+        auto vec2 = std::get<std::shared_ptr<VectorV>>(op2);
+
+        assertm(vec1->elems.size() == vec2->elems.size() && vec1->elems.size() == type.vector.elem_count, "SPIRV simulator: Vector size mismatch in Op_ShiftRightLogical");
+
+        for (uint32_t i = 0; i < type.vector.elem_count; ++i) {
+            if (std::holds_alternative<uint64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])) {
+                result_vec->elems.push_back(std::get<uint64_t>(vec1->elems[i]) >> std::get<uint64_t>(vec2->elems[i]));
+            } else if (std::holds_alternative<int64_t>(vec1->elems[i]) && std::holds_alternative<uint64_t>(vec2->elems[i])) {
+                result_vec->elems.push_back(arithmeticRightShift((uint64_t)std::get<int64_t>(vec1->elems[i]), std::get<uint64_t>(vec2->elems[i])));
+            } else {
+                assertx("SPIRV simulator: Invalid operand types in Op_ShiftRightLogical vector");
+            }
+        }
+        SetValue(result_id, result);
+    } else if (type.kind == Type::Kind::Int) {
+        Value result;
+        if (std::holds_alternative<uint64_t>(op1) && std::holds_alternative<uint64_t>(op2)) {
+            result =  std::get<uint64_t>(op1) >> std::get<uint64_t>(op2);
+        } else if (std::holds_alternative<int64_t>(op1) && std::holds_alternative<uint64_t>(op2)) {
+            result = arithmeticRightShift((int64_t)std::get<int64_t>(op1), std::get<uint64_t>(op2));
+        } else {
+            assertx("SPIRV simulator: Invalid operand types in Op_ShiftRightLogical");
+        }
+        SetValue(result_id, result);
+    } else {
+        assertx("SPIRV simulator: Invalid result type in Op_ShiftRightLogical, must be vector or int");
     }
 }
 

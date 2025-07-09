@@ -491,12 +491,18 @@ private:
     void Op_LogicalAnd(const Instruction&);
     void Op_MatrixTimesMatrix(const Instruction&);
     void Op_IsNan(const Instruction&);
-    void OpConvertFToS(const Instruction&);
-    void OpConvertFToU(const Instruction&);
-    void OpFOrdEqual(const Instruction&);
-    void OpFOrdGreaterThanEqual(const Instruction&);
-    void OpFOrdNotEqual(const Instruction&);
-    void OpFRem(const Instruction&);
+    void Op_ConvertFToS(const Instruction&);
+    void Op_ConvertFToU(const Instruction&);
+    void Op_FOrdEqual(const Instruction&);
+    void Op_FOrdGreaterThanEqual(const Instruction&);
+    void Op_FOrdNotEqual(const Instruction&);
+    void Op_FRem(const Instruction&);
+    void Op_AtomicOr(const Instruction&);
+    void Op_AtomicUMax(const Instruction&);
+    void Op_AtomicUMin(const Instruction&);
+    void Op_BitwiseXor(const Instruction&);
+    void Op_ControlBarrier(const Instruction&);
+    void Op_ShiftRightArithmetic(const Instruction&);
 };
 
 }
