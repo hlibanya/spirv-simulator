@@ -5,9 +5,7 @@
 
 #include <cstdint>
 #include <cstring>
-#include <fstream>
 #include <functional>
-#include <iostream>
 #include <memory>
 #include <set>
 #include <span>
@@ -28,7 +26,8 @@
 #include "spirv.hpp"
 #endif
 
-namespace SPIRVSimulator {
+namespace SPIRVSimulator
+{
 
 // ---------------------------------------------------------------------------
 //  Input structure
@@ -41,7 +40,8 @@ namespace SPIRVSimulator {
 //  to a binding with the std430 layout, the data in the byte vectors must obey the rules of
 //  that layout
 
-struct InputData{
+struct InputData
+{
     // The SpirV ID of the entry point to use
     uint32_t entry_point_id = 0;
     // The OpName label (function name) of the entry point to use, takes priority over entry_point_id if it is set.
@@ -52,7 +52,7 @@ struct InputData{
 
     // SpecId -> byte offset
     std::unordered_map<uint32_t, size_t> specialization_constant_offsets;
-    void* specialization_constants = nullptr;
+    void*                                specialization_constants = nullptr;
 
     // The full binary push_constant block
     void* push_constants = nullptr;
@@ -69,13 +69,15 @@ struct InputData{
 // ---------------------------------------------------------------------------
 // Output structure
 
-enum BitLocation{
-    Constant,  // Constant embedded in the shader, offsets will be relative to the start of the spirv binary code
-    SpecConstant,  // Spec constant, binding will be SpecId
+enum BitLocation
+{
+    Constant,     // Constant embedded in the shader, offsets will be relative to the start of the spirv binary code
+    SpecConstant, // Spec constant, binding will be SpecId
     StorageClass  // storage_class specifies what block type we are dealing with
 };
 
-struct DataSourceBits{
+struct DataSourceBits
+{
     /*
     Structure describing where a sequence of bits can be found that ended up being used to construct
     (or that was eventually interpreted as) a pointer pointing to data with the PhysicalStorageBuffer storage class
@@ -115,28 +117,32 @@ struct DataSourceBits{
 
 // We return a vector of these.
 // The bit_components vector contain data on where the bits that eventually become the pointer were read from.
-struct PhysicalAddressData{
+struct PhysicalAddressData
+{
     std::vector<DataSourceBits> bit_components;
-    uint64_t raw_pointer_value;
+    uint64_t                    raw_pointer_value;
 };
 
 // ---------------------------------------------------------------------------
 
-struct Instruction{
+struct Instruction
+{
     spv::Op opcode;
 
     // word_count is the total number of words this instruction is composed of,
     // including the word holding the opcode + wordcount value.
     // This (along with the opcode above) is a redundant value as the first uint32 in words will also hold it,
     // but it is included/decoded here for ease-of-use and clarity
-    uint16_t word_count;
+    uint16_t                  word_count;
     std::span<const uint32_t> words;
 };
 
-struct Type{
-    enum class Kind{
+struct Type
+{
+    enum class Kind
+    {
         Void,
-        BoolT,  // Because x11 headers have a macro called Bool
+        BoolT, // Because x11 headers have a macro called Bool
         Int,
         Float,
         Vector,
@@ -144,7 +150,8 @@ struct Type{
         Array,
         Struct,
         Pointer,
-        RuntimeArray,  // TODO: We can/probably should make these maps and use sparse access (eg. add a new map value for these and load during OpAccessChain)
+        RuntimeArray, // TODO: We can/probably should make these maps and use sparse access (eg. add a new map value for
+                      // these and load during OpAccessChain)
         Image,
         Sampler,
         SampledImage,
@@ -152,26 +159,96 @@ struct Type{
         NamedBarrier
     } kind;
 
-    struct ScalarTypeData{uint32_t width; bool is_signed;};
-    struct VectorTypeData{uint32_t elem_type_id; uint32_t elem_count;};
-    struct MatrixTypeData{uint32_t col_type_id;  uint32_t col_count;};
-    struct ArrayTypeData{uint32_t elem_type_id; uint32_t length_id;};
-    struct PointerTypeData{uint32_t storage_class; uint32_t pointee_type_id;};
-    struct ImageTypeData{uint32_t sampled_type_id;};
-    struct SampledImageTypeData{uint32_t image_type_id;};
-    struct OpaqueTypeData{uint32_t name;};
-
-    union{
-        ScalarTypeData scalar;
-        VectorTypeData vector;
-        MatrixTypeData matrix;
-        ArrayTypeData array;
-        PointerTypeData pointer;
-        ImageTypeData image;
-        SampledImageTypeData sampled_image;
-        OpaqueTypeData opaque;
+    struct ScalarTypeData
+    {
+        uint32_t width;
+        bool     is_signed;
     };
-    Type(): kind(Kind::Void){scalar = {0, false};}
+    struct VectorTypeData
+    {
+        uint32_t elem_type_id;
+        uint32_t elem_count;
+    };
+    struct MatrixTypeData
+    {
+        uint32_t col_type_id;
+        uint32_t col_count;
+    };
+    struct ArrayTypeData
+    {
+        uint32_t elem_type_id;
+        uint32_t length_id;
+    };
+    struct PointerTypeData
+    {
+        uint32_t storage_class;
+        uint32_t pointee_type_id;
+    };
+    struct ImageTypeData
+    {
+        uint32_t sampled_type_id;
+    };
+    struct SampledImageTypeData
+    {
+        uint32_t image_type_id;
+    };
+    struct OpaqueTypeData
+    {
+        uint32_t name;
+    };
+
+    union
+    {
+        ScalarTypeData       scalar;
+        VectorTypeData       vector;
+        MatrixTypeData       matrix;
+        ArrayTypeData        array;
+        PointerTypeData      pointer;
+        ImageTypeData        image;
+        SampledImageTypeData sampled_image;
+        OpaqueTypeData       opaque;
+    };
+    Type() : kind(Kind::Void) { scalar = { 0, false }; }
+
+    static Type Bool()
+    {
+        Type t;
+        t.kind   = Kind::BoolT;
+        t.scalar = ScalarTypeData{ .width = 32, .is_signed = false };
+        return t;
+    }
+
+    static Type Int(uint32_t width, bool is_signed)
+    {
+        Type t;
+        t.kind   = Kind::Int;
+        t.scalar = ScalarTypeData{ .width = width, .is_signed = is_signed };
+        return t;
+    }
+
+    static Type Float(uint32_t width)
+    {
+        Type t;
+        t.kind   = Kind::Float;
+        t.scalar = ScalarTypeData{ .width = width, .is_signed = true };
+        return t;
+    }
+
+    static Type Vector(uint32_t element_type_id, uint32_t element_count)
+    {
+        Type t;
+        t.kind   = Kind::Vector;
+        t.vector = VectorTypeData{ .elem_type_id = element_type_id, .elem_count = element_count };
+        return t;
+    }
+
+    static Type Matrix(uint32_t column_type_id, uint32_t column_count)
+    {
+        Type t;
+        t.kind   = Kind::Matrix;
+        t.matrix = MatrixTypeData{ .col_type_id = column_type_id, .col_count = column_count };
+        return t;
+    }
 };
 
 struct AggregateV;
@@ -182,30 +259,35 @@ struct MatrixV;
 using VectorVPtr    = std::shared_ptr<VectorV>;
 using MatrixVPtr    = std::shared_ptr<MatrixV>;
 using AggregateVPtr = std::shared_ptr<AggregateV>;
+using Value = std::variant<std::monostate,
+                           uint64_t,
+                           int64_t,
+                           double,
+                           VectorVPtr,
+                           MatrixVPtr,
+                           AggregateVPtr,
+                           PointerV>;
 
-using Value = std::variant<
-    std::monostate,
-    uint64_t,
-    int64_t,
-    double,
-    VectorVPtr,
-    MatrixVPtr,
-    AggregateVPtr,
-    PointerV>;
-
-struct VectorV{
+struct VectorV
+{
     std::vector<Value> elems;
+    VectorV() = default;
+    explicit VectorV(std::span<const Value> s) : elems(s.begin(), s.end()) {}
+    explicit VectorV(std::initializer_list<Value> initializer_list) : elems(initializer_list) {}
 };
 
-struct MatrixV{
+struct MatrixV
+{
     std::vector<Value> cols;
 };
 
-struct AggregateV{
+struct AggregateV
+{
     std::vector<Value> elems;
-};  // array or struct
+}; // array or struct
 
-struct PointerV {
+struct PointerV
+{
     // Always the index of the value that this pointer points to
     uint32_t obj_id;
     // The TypeID of this pointer
@@ -215,106 +297,133 @@ struct PointerV {
     // Optional value, holds the raw pointer value when applicable
     uint64_t raw_pointer;
 
-    // If it points to a value inside a composite, aggregate or array value. This is the indirection path within said value.
+    // If it points to a value inside a composite, aggregate or array value. This is the indirection path within said
+    // value.
     std::vector<uint32_t> idx_path;
     // This is the result_id chain of the objects holding the idx path values
     std::vector<uint32_t> idx_path_ids;
 };
 
-struct DecorationInfo{
-    spv::Decoration kind;
+struct DecorationInfo
+{
+    spv::Decoration       kind;
     std::vector<uint32_t> literals;
 };
 
 void DecodeInstruction(std::span<const uint32_t>& program_words, Instruction& instruction);
 
-template<class T>
-void extract_bytes(std::vector<std::byte>& output, T input, size_t num_bits){
-    if (sizeof(input) != 8){
+template <class T>
+void extract_bytes(std::vector<std::byte>& output, T input, size_t num_bits)
+{
+    if (sizeof(input) != 8)
+    {
         throw std::runtime_error("SPIRV simulator: extract_bytes called on type that is not 8 bytes");
     }
 
     std::array<std::byte, sizeof(T)> arr;
 
     std::memcpy(arr.data(), &input, sizeof(T));
-    if (num_bits > 32){
+    if (num_bits > 32)
+    {
         output.insert(output.end(), arr.begin(), arr.end());
-    } else {
+    }
+    else
+    {
         output.insert(output.end(), arr.begin(), arr.begin() + 4);
     }
 }
 
 // Bitcast an be very annoying to import on certain platforms, even if c++20 is supported
 // Just do this for now, and we can replace this with the std::bit_cast version in the future
-template<class To, class From>
-typename std::enable_if_t<sizeof(To) == sizeof(From) && std::is_trivially_copyable_v<From> && std::is_trivially_copyable_v<To>, To> bit_cast(const From& src) noexcept {
-  To dst;
-  std::memcpy(&dst, &src, sizeof(To));
-  return dst;
+template <class To, class From>
+typename std::enable_if_t<sizeof(To) == sizeof(From) && std::is_trivially_copyable_v<From> &&
+                              std::is_trivially_copyable_v<To>,
+                          To>
+bit_cast(const From& src) noexcept
+{
+    To dst;
+    std::memcpy(&dst, &src, sizeof(To));
+    return dst;
 }
 
-class SPIRVSimulator{
-public:
-    explicit SPIRVSimulator(const std::vector<uint32_t>& program_words, const InputData& input_data, bool verbose=false);
+class SPIRVSimulator
+{
+  public:
+    explicit SPIRVSimulator(const std::vector<uint32_t>& program_words,
+                            const InputData&             input_data,
+                            bool                         verbose = false);
     void Run();
 
     // When called (after a Run()) will write the outputs to the input_data mapped pointers
     void WriteOutputs();
 
-    const std::vector<PhysicalAddressData>& GetPhysicalAddressData() const {return physical_address_pointer_source_data_;}
+    const std::vector<PhysicalAddressData>& GetPhysicalAddressData() const
+    {
+        return physical_address_pointer_source_data_;
+    }
 
     std::set<std::string> unsupported_opcodes;
 
-private:
+    virtual ~SPIRVSimulator() = default;
+
+  protected:
+    SPIRVSimulator() = default;
+
     // Used to create object id's for entries not created by a spirv instruction
     uint32_t next_external_id_ = 0;
 
     // Parsing artefacts
     InputData input_data_;
-    // Contains entry point ID -> entry point OpName labels (labels may be non-existent/empty)
-    std::unordered_map<uint32_t, std::string> entry_points_;
-    std::vector<uint32_t> program_words_;
-    std::span<const uint32_t> stream_;
-    std::vector<Instruction> instructions_;
+    // Contains entry point ID -> entry point OpName labels (labels may be
+    // non-existent/empty)
+    std::unordered_map<uint32_t, std::string>           entry_points_;
+    std::vector<uint32_t>                               program_words_;
+    std::span<const uint32_t>                           stream_;
+    std::vector<Instruction>                            instructions_;
     std::unordered_map<uint32_t, std::vector<uint32_t>> spec_instr_words_;
-    std::unordered_map<uint32_t, Instruction> spec_instructions_;
-    std::unordered_map<uint32_t, size_t> result_id_to_inst_index_;
-    std::unordered_map<uint32_t, Type> types_;
+    std::unordered_map<uint32_t, Instruction>           spec_instructions_;
+    std::unordered_map<uint32_t, size_t>                result_id_to_inst_index_;
+    std::unordered_map<uint32_t, Type>                  types_;
     std::unordered_map<uint32_t, std::vector<uint32_t>> struct_members_;
-    std::unordered_map<uint32_t, uint32_t> forward_type_declarations_;  // Unused, consider removing this
-    std::unordered_map<uint32_t, std::vector<DecorationInfo>> decorators_;
+    std::unordered_map<uint32_t, uint32_t>              forward_type_declarations_; // Unused, consider removing this
+    std::unordered_map<uint32_t, std::vector<DecorationInfo>>                               decorators_;
     std::unordered_map<uint32_t, std::unordered_map<uint32_t, std::vector<DecorationInfo>>> struct_decorators_;
-    std::unordered_map<uint32_t, std::string> extended_imports_;
-    // Any result ID in this set, can be treated as if it has any valid value for the given type
+    std::unordered_map<uint32_t, std::string>                                               extended_imports_;
+    // Any result ID in this set, can be treated as if it has any valid value for
+    // the given type
     std::set<uint32_t> arbitrary_values_;
-    // This maps the result ID of pointers to the result ID of values stored through them
+    // This maps the result ID of pointers to the result ID of values stored
+    // through them
     std::unordered_map<uint32_t, uint32_t> values_stored_;
 
     // Debug only
     bool verbose_;
 
-    // These hold information about any pointers that reference physical storage buffers
-    std::vector<PointerV> physical_address_pointers_;
-    std::vector<std::pair<PointerV, PointerV>> pointers_to_physical_address_pointers_;
-    std::vector<PhysicalAddressData> physical_address_pointer_source_data_;
+    // These hold information about any pointers that reference physical storage
+    // buffers
+    std::vector<PointerV>                        physical_address_pointers_;
+    std::vector<std::pair<PointerV, PointerV>>   pointers_to_physical_address_pointers_;
+    std::vector<PhysicalAddressData>             physical_address_pointer_source_data_;
     std::unordered_map<uint32_t, DataSourceBits> data_source_bits_;
 
     // Control flow
-    struct FunctionInfo{
-        size_t inst_index;
-        size_t first_inst_index;
+    struct FunctionInfo
+    {
+        size_t                inst_index;
+        size_t                first_inst_index;
         std::vector<uint32_t> parameter_ids_;
         std::vector<uint32_t> parameter_type_ids_;
     };
-    uint32_t prev_defined_func_id_;
+    uint32_t                                   prev_defined_func_id_;
     std::unordered_map<uint32_t, FunctionInfo> funcs_;
 
-    uint32_t prev_block_id_ = 0;
+    uint32_t prev_block_id_    = 0;
     uint32_t current_block_id_ = 0;
 
     // Heaps & frames
-    struct Frame{
-        size_t pc;
+    struct Frame
+    {
+        size_t   pc;
         uint32_t result_id;
 
         // result_id -> Value
@@ -337,45 +446,51 @@ private:
 
     // Handlers used by the OpExtInst handler
     // Implementation of the operations in the GLSL extended set
-    void GLSLExtHandler(
-        uint32_t type_id,
-        uint32_t result_id,
-        uint32_t instruction_literal,
-        const std::span<const uint32_t>& operand_words);
+    void GLSLExtHandler(uint32_t                         type_id,
+                        uint32_t                         result_id,
+                        uint32_t                         instruction_literal,
+                        const std::span<const uint32_t>& operand_words);
 
     // Helpers
     // TODO: Many more of these can be const, fix
-    void DecodeHeader();
-    void ParseAll();
-    void RegisterOpcodeHandlers();
-    void CheckOpcodeSupport();
-    void Validate();
-    void ExecuteInstruction(const Instruction&);
-    std::string GetValueString(const Value&);
-    std::string GetTypeString(const Type&);
-    void PrintInstruction(const Instruction&);
-    void HandleUnimplementedOpcode(const Instruction&);
-    Value MakeScalar(uint32_t type_id, const uint32_t*& words);
-    Value MakeDefault(uint32_t type_id, const uint32_t** initial_data=nullptr);
-    Value& Deref(const PointerV &ptr);
-    Value& GetValue(uint32_t result_id);
-    void SetValue(uint32_t result_id, const Value& value);
-    Type GetType(uint32_t result_id) const;
-    uint32_t GetTypeID(uint32_t result_id) const;
-    void ExtractWords(const std::byte* external_pointer, uint32_t type_id, std::vector<uint32_t>& buffer_data);
-    uint64_t GetPointerOffset(const PointerV& pointer_value);
-    size_t GetBitizeOfType(uint32_t type_id);
-    size_t GetBitizeOfTargetType(const PointerV& pointer);
-    void GetBaseTypeIDs(uint32_t type_id, std::vector<uint32_t>& output);
-    std::vector<DataSourceBits> FindDataSourcesFromResultID(uint32_t result_id);
-    bool HasDecorator(uint32_t result_id, spv::Decoration decorator);
-    bool HasDecorator(uint32_t result_id, uint32_t member_id, spv::Decoration decorator);
-    uint32_t GetDecoratorLiteral(uint32_t result_id, spv::Decoration decorator, size_t literal_offset=0);
-    uint32_t GetDecoratorLiteral(uint32_t result_id, uint32_t member_id, spv::Decoration decorator, size_t literal_offset=0);
-    uint32_t GetNextExternalID(){uint32_t new_id = next_external_id_; next_external_id_ += 1; return new_id;}
-    bool ValueIsArbitrary(uint32_t result_id) const {return arbitrary_values_.contains(result_id);};
-    Value CopyValue(const Value& value) const;
-    std::unordered_map<uint32_t,Value>& Heap(uint32_t sc){ return heaps_[sc]; }
+    virtual void        DecodeHeader();
+    virtual void        ParseAll();
+    virtual void        RegisterOpcodeHandlers();
+    virtual void        CheckOpcodeSupport();
+    virtual void        Validate();
+    virtual void        ExecuteInstruction(const Instruction&);
+    virtual std::string GetValueString(const Value&);
+    virtual std::string GetTypeString(const Type&);
+    virtual void        PrintInstruction(const Instruction&);
+    virtual void        HandleUnimplementedOpcode(const Instruction&);
+    virtual Value       MakeScalar(uint32_t type_id, const uint32_t*& words);
+    virtual Value       MakeDefault(uint32_t type_id, const uint32_t** initial_data = nullptr);
+    virtual Value&      Deref(const PointerV& ptr);
+    virtual Value&      GetValue(uint32_t result_id);
+    virtual void        SetValue(uint32_t result_id, const Value& value);
+    virtual Type        GetTypeByTypeId(uint32_t type_id) const;
+    virtual Type        GetTypeByResultId(uint32_t result_id) const;
+    virtual uint32_t    GetTypeID(uint32_t result_id) const;
+    virtual void ExtractWords(const std::byte* external_pointer, uint32_t type_id, std::vector<uint32_t>& buffer_data);
+    virtual uint64_t                    GetPointerOffset(const PointerV& pointer_value);
+    virtual size_t                      GetBitizeOfType(uint32_t type_id);
+    virtual size_t                      GetBitizeOfTargetType(const PointerV& pointer);
+    virtual void                        GetBaseTypeIDs(uint32_t type_id, std::vector<uint32_t>& output);
+    virtual std::vector<DataSourceBits> FindDataSourcesFromResultID(uint32_t result_id);
+    virtual bool                        HasDecorator(uint32_t result_id, spv::Decoration decorator);
+    virtual bool                        HasDecorator(uint32_t result_id, uint32_t member_id, spv::Decoration decorator);
+    virtual uint32_t GetDecoratorLiteral(uint32_t result_id, spv::Decoration decorator, size_t literal_offset = 0);
+    virtual uint32_t
+    GetDecoratorLiteral(uint32_t result_id, uint32_t member_id, spv::Decoration decorator, size_t literal_offset = 0);
+    virtual uint32_t GetNextExternalID()
+    {
+        uint32_t new_id = next_external_id_;
+        next_external_id_ += 1;
+        return new_id;
+    }
+    virtual bool  ValueIsArbitrary(uint32_t result_id) const { return arbitrary_values_.contains(result_id); };
+    virtual Value CopyValue(const Value& value) const;
+    virtual std::unordered_map<uint32_t, Value>& Heap(uint32_t sc) { return heaps_[sc]; }
 
     // Opcode handlers, 96/498 implemented for SPIRV 1.6
     void T_Void(const Instruction&);
@@ -505,6 +620,6 @@ private:
     void Op_ShiftRightArithmetic(const Instruction&);
 };
 
-}
+} // namespace SPIRVSimulator
 
 #endif
